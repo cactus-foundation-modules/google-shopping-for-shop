@@ -46,6 +46,20 @@ export type FeedItem = {
   googleProductCategory?: string
   /** e.g. "12.5 kg" - only when the weight and a Google-accepted unit exist. */
   shippingWeight?: string
+  /** Working days from order to dispatch. Google wants a range; a shop quoting
+   *  one figure sends it as both ends. Both are set together or neither is -
+   *  Google rejects a half-stated range. */
+  minHandlingTime?: number
+  maxHandlingTime?: number
+  /** Working days from dispatch to doorstep, same rule. Sent per item rather
+   *  than left to the Merchant Center account, because a shop whose couriers
+   *  differ by supplier or department has no single account-wide answer. */
+  minTransitTime?: number
+  maxTransitTime?: number
+  /** ISO instant the item can first be dispatched. Google REQUIRES this on a
+   *  pre-order or backorder item and ignores it on anything else, so it is only
+   *  ever rendered alongside those two availabilities. */
+  availabilityDate?: string
   axes?: FeedVariantAxes
 }
 
@@ -118,6 +132,22 @@ function tag(name: string, value: string | undefined): string {
   return value === undefined || value === '' ? '' : `\n      <${name}>${escapeXml(value)}</${name}>`
 }
 
+// A half-stated range is worse than none: Google rejects min without max. So
+// each pair is rendered only when both ends are whole non-negative numbers, and
+// a product the shop cannot put a time on sends neither and inherits whatever
+// the Merchant Center account says.
+function handlingAndTransit(item: FeedItem): string[] {
+  const pair = (minName: string, maxName: string, min: number | undefined, max: number | undefined): string[] => {
+    const usable = (n: number | undefined): n is number => n !== undefined && Number.isInteger(n) && n >= 0
+    if (!usable(min) || !usable(max)) return []
+    return [tag(minName, String(min)), tag(maxName, String(max))]
+  }
+  return [
+    ...pair('g:min_handling_time', 'g:max_handling_time', item.minHandlingTime, item.maxHandlingTime),
+    ...pair('g:min_transit_time', 'g:max_transit_time', item.minTransitTime, item.maxTransitTime),
+  ]
+}
+
 function renderItem(item: FeedItem): string {
   const [primary, ...rest] = item.imageLinks
   const parts = [
@@ -140,6 +170,12 @@ function renderItem(item: FeedItem): string {
     tag('g:product_type', item.productType),
     tag('g:google_product_category', item.googleProductCategory),
     tag('g:shipping_weight', item.shippingWeight),
+    ...handlingAndTransit(item),
+    // Only meaningful on the two availabilities where the shop has not got the
+    // thing yet; Google disapproves a pre-order item that omits it.
+    item.availability === 'preorder' || item.availability === 'backorder'
+      ? tag('g:availability_date', item.availabilityDate)
+      : '',
     tag('g:color', item.axes?.color),
     tag('g:size', item.axes?.size),
     tag('g:material', item.axes?.material),

@@ -23,6 +23,7 @@ import { getProductIdsWithVariations } from '@/modules/shop-variations/lib/db/va
 import { getEditorPayloadsBatch } from '@/modules/shop-variations/lib/variants-service'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
+import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
 import { mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
 
@@ -333,6 +334,26 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
       shippingWeight: shippingWeightOf(product.weight, product.weightUnit),
     })
+  }
+
+  // ----- Delivery times ------------------------------------------------------
+  // Attached in one pass over the finished items rather than inside either loop:
+  // the whole point of asking a delivery module once for every id in the run is
+  // that it resolves the catalogue in batches, and a call per item would undo
+  // that. Silent when no delivery-timing module is installed, in which case the
+  // items keep whatever Merchant Center's own account settings say.
+  const timing = await getDeliveryTiming(items.map((item) => item.id))
+  for (const item of items) {
+    const times = timing.get(item.id)
+    if (!times) continue
+    // One figure each way, sent as both ends of Google's range: the shop quotes
+    // a single working-day count, and inventing a spread around it would be
+    // making up a promise nobody made.
+    item.minHandlingTime = times.handlingDays
+    item.maxHandlingTime = times.handlingDays
+    item.minTransitTime = times.transitDays
+    item.maxTransitTime = times.transitDays
+    if (times.availabilityDate) item.availabilityDate = times.availabilityDate
   }
 
   return items
