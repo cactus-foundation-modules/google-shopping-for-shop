@@ -10,6 +10,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/prisma'
 import { getShopConfigCached } from '@/modules/shop/lib/config'
+import { productUrl } from '@/modules/shop/lib/product-url'
 import { listProducts, getProductMediaForProducts, HARD_MAX_PER_PAGE } from '@/modules/shop/lib/db/products'
 import { listCategories } from '@/modules/shop/lib/db/catalogue'
 import { getDefaultTaxZoneId, listTaxZoneRates } from '@/modules/shop/lib/db/tax-shipping'
@@ -267,7 +268,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         itemGroupId: parent.id,
         title: variant.label ? `${parent.name} - ${variant.label}` : parent.name,
         description,
-        link: `${siteUrl}/shop/products/${child.slug}`,
+        link: productUrl(siteUrl, child.slug, config.productUrlStyle),
         imageLinks: variant.imageUrls.length > 0 ? variant.imageUrls : parentImages,
         availability: availabilityOf({
           trackInventory: variant.trackInventory,
@@ -301,7 +302,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         { meta_description: product.metaDescription, short_description: product.shortDescription, description: product.description },
         product.name,
       ),
-      link: `${siteUrl}/shop/products/${product.slug}`,
+      link: productUrl(siteUrl, product.slug, config.productUrlStyle),
       imageLinks: imagesOf(product.id),
       availability: availabilityOf(product),
       price: gross(Number(product.price), product.taxClassId),
