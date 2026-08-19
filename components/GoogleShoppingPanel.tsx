@@ -83,7 +83,7 @@ export function GoogleShoppingPanel({ initial }: { initial: GsfProductData }) {
 
       <label style={field}>
         <span style={labelStyle}>Brand</span>
-        <input type="text" value={text(form.brand)} placeholder="Uses the shop-wide default when blank" onChange={(e) => set('brand', e.target.value || null)} style={inputStyle} />
+        <input type="text" value={text(form.brand)} placeholder="Blank uses the supplier, then the shop-wide default" onChange={(e) => set('brand', e.target.value || null)} style={inputStyle} />
       </label>
 
       <label style={field}>

@@ -12,8 +12,11 @@ CREATE TABLE IF NOT EXISTS "gsf_settings" (
     -- code on first read (crypto-random, not SQL), never guessed here: NULL means
     -- "not minted yet" and the route refuses to serve until it exists.
     "feed_token" TEXT,
-    -- Brand written on every feed item that has no per-product brand of its own.
+    -- Brand written on every feed item that has no brand of its own.
     "default_brand" TEXT,
+    -- Take a product's brand from the supplier the shop files it under
+    -- (shp_products.supplier) before reaching for the default above.
+    "brand_from_supplier" BOOLEAN NOT NULL DEFAULT true,
     -- Google's condition attribute when a product does not say otherwise. A shop
     -- selling seconds can flip individual products via gsf_product_data.
     "default_condition" TEXT NOT NULL DEFAULT 'new',

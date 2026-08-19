@@ -9,6 +9,9 @@ export type GsfSettings = {
   // serve while it is null, so a token always exists before a URL can work.
   feedToken: string | null
   defaultBrand: string | null
+  // Take each product's brand from the supplier the shop files it under
+  // (shp_products.supplier), ahead of defaultBrand. Off, the supplier is ignored.
+  brandFromSupplier: boolean
   defaultCondition: GsfCondition
 }
 
@@ -18,6 +21,7 @@ export type GsfSettingsView = {
   enabled: boolean
   feedUrl: string | null
   defaultBrand: string
+  brandFromSupplier: boolean
   defaultCondition: GsfCondition
 }
 

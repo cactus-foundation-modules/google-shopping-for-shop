@@ -66,7 +66,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; defaultCondition?: GsfCondition; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -177,7 +177,20 @@ export function GoogleShoppingSettingsTab() {
               Save brand
             </button>
           </div>
-          <span style={hint}>Written on every listing that has no brand of its own (set per product on its Google Shopping tab). Google wants one on almost everything.</span>
+          <span style={hint}>The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
+        </label>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.brandFromSupplier}
+            disabled={saving}
+            onChange={(e) => void save({ brandFromSupplier: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Use the supplier as the brand</span>
+            <span style={hint}>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</span>
+          </span>
         </label>
         <label style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>

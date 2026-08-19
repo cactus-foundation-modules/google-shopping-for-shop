@@ -25,6 +25,8 @@ modules.
   attributes by name, so filters on Google work without any setup.
 - Products the shop hides (draft, hidden, out of stock on shops that hide them)
   stay out of the feed automatically. Sale prices travel as sale prices.
+- Brand runs in order: whatever the product's own Google Shopping tab says, then
+  the product's supplier, then the shop-wide default.
 
 ## Setting up
 
@@ -32,8 +34,11 @@ modules.
    Google Shopping**. Copy the feed address.
 2. In Google Merchant Center: **Products → Data sources → Add product source →
    Add a file with a link**, paste the address and pick a daily fetch.
-3. Set a default **Brand** in the same settings tab - Google wants a brand on
-   nearly everything.
+3. Check the **Brand** settings in the same tab - Google wants a brand on nearly
+   everything. By default each listing takes the name of the supplier the shop
+   files the product under; the default brand covers anything with no supplier.
+   Switch the supplier option off if your suppliers are middlemen rather than the
+   names on the box.
 
 That is the whole job. Optionally, each product's editor gains a **Google
 Shopping** tab for per-product details: brand, GTIN, MPN, Google's own category,

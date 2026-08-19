@@ -13,6 +13,7 @@ async function view(): Promise<GsfSettingsView> {
     enabled: settings.enabled,
     feedUrl: siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null,
     defaultBrand: settings.defaultBrand ?? '',
+    brandFromSupplier: settings.brandFromSupplier,
     defaultCondition: settings.defaultCondition,
   }
 }
@@ -26,6 +27,7 @@ export async function GET() {
 const PatchBody = z.object({
   enabled: z.boolean().optional(),
   defaultBrand: z.string().max(70).optional(),
+  brandFromSupplier: z.boolean().optional(),
   defaultCondition: z.enum(GSF_CONDITIONS).optional(),
   // Cuts the old feed URL off immediately and mints a fresh one.
   regenerateToken: z.boolean().optional(),
@@ -40,6 +42,7 @@ export async function PATCH(request: NextRequest) {
   await updateGsfSettings({
     enabled: body.enabled,
     defaultBrand: body.defaultBrand,
+    brandFromSupplier: body.brandFromSupplier,
     defaultCondition: body.defaultCondition,
   })
   if (body.regenerateToken) await regenerateGsfFeedToken()

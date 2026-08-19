@@ -39,6 +39,7 @@ type ParentRow = {
   meta_description: string | null
   master_category_id: string | null
   tax_class_id: string | null
+  supplier: string | null
 }
 
 // The per-child columns VariantEditorRow does not carry (availability inputs
@@ -53,6 +54,7 @@ type ChildRow = {
   is_pre_order: boolean
   tax_class_id: string | null
   weight_unit: string | null
+  supplier: string | null
 }
 
 // Units Google's shipping_weight accepts; anything else drops the attribute.
@@ -104,13 +106,22 @@ function descriptionOf(parent: { meta_description?: string | null; short_descrip
 // would claim they are all the same part. SKUs are deliberately never used:
 // the shop withholds its buying codes from shoppers, so the feed must not
 // publish them either.
+//
+// Brand runs per-product override, then the supplier the shop files the product
+// under (when the setting allows), then the shop-wide default. The supplier is
+// the nearest thing the shop already knows to a maker's name, so a catalogue
+// filed by supplier needs no per-product brand typed in at all. On a variation
+// it is the CHILD row's supplier first: an import fills the supplier in on the
+// rows it creates, which are the children, and a parent assembled by hand in the
+// admin often has the column left blank. The parent only stands in behind it.
 function identifiersOf(
   data: Pick<GsfProductData, 'brand' | 'gtin' | 'mpn'>,
-  defaultBrand: string | null,
+  brandFallbacks: { supplier: string | null; defaultBrand: string | null; useSupplier: boolean },
   barcode: string | null,
   opts: { standalone: boolean },
 ): { brand?: string; gtin?: string; mpn?: string; identifierExists: boolean } {
-  const brand = data.brand ?? defaultBrand ?? undefined
+  const supplier = brandFallbacks.useSupplier ? brandFallbacks.supplier : null
+  const brand = data.brand ?? supplier ?? brandFallbacks.defaultBrand ?? undefined
   const gtin = normaliseGtin(barcode) ?? (opts.standalone ? normaliseGtin(data.gtin) : null) ?? undefined
   const mpn = opts.standalone ? data.mpn ?? undefined : undefined
   return { brand, gtin, mpn, identifierExists: Boolean(gtin || (brand && mpn)) }
@@ -152,7 +163,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     const stockFilter = hideOutOfStock ? Prisma.sql`AND NOT ${await outOfStockSql()}` : Prisma.empty
     parents = await prisma.$queryRaw<ParentRow[]>`
       SELECT p."id", p."name", p."slug", p."price", p."sale_price", p."description", p."short_description",
-             p."meta_description", p."master_category_id", p."tax_class_id"
+             p."meta_description", p."master_category_id", p."tax_class_id", p."supplier"
       FROM "shp_products" p
       WHERE p."id" IN (${Prisma.join(variationParentIds)})
         AND p."status" = 'ACTIVE' AND p."catalogue_hidden" = false AND p."type" = 'PHYSICAL'
@@ -168,7 +179,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
   if (childIds.length > 0) {
     const rows = await prisma.$queryRaw<ChildRow[]>`
       SELECT "id", "slug", "status", "track_inventory", "stock_count", "out_of_stock_behaviour",
-             "is_pre_order", "tax_class_id", "weight_unit"
+             "is_pre_order", "tax_class_id", "weight_unit", "supplier"
       FROM "shp_products" WHERE "id" IN (${Prisma.join(childIds)})
     `
     for (const row of rows) childById.set(row.id, row)
@@ -229,6 +240,14 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     return categoryId ? categoryPaths.get(categoryId) : undefined
   }
 
+  // First supplier name with anything in it, so a blank column on the row nearest
+  // the item still lets the one behind it answer.
+  const brandFallbacks = (...suppliers: Array<string | null | undefined>) => ({
+    supplier: suppliers.map((s) => s?.trim() || null).find((s) => s !== null) ?? null,
+    defaultBrand: settings.defaultBrand,
+    useSupplier: settings.brandFromSupplier,
+  })
+
   const imagesOf = (productId: string): string[] =>
     (mediaByProduct.get(productId) ?? [])
       .filter((m) => m.type === 'IMAGE')
@@ -279,7 +298,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         price: gross(variant.price, taxClassId),
         ...(onSale && variant.salePrice != null ? { salePrice: gross(variant.salePrice, taxClassId) } : {}),
         currency,
-        ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, settings.defaultBrand, variant.barcode, { standalone: false }),
+        ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, brandFallbacks(child.supplier, parent.supplier), variant.barcode, { standalone: false }),
         condition,
         productType,
         ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
@@ -308,7 +327,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       price: gross(Number(product.price), product.taxClassId),
       ...(onSale && product.salePrice != null ? { salePrice: gross(Number(product.salePrice), product.taxClassId) } : {}),
       currency,
-      ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, settings.defaultBrand, product.barcode, { standalone: true }),
+      ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, brandFallbacks(product.supplier), product.barcode, { standalone: true }),
       condition: data?.condition ?? settings.defaultCondition,
       productType: productTypeOf(product.id, product.masterCategoryId),
       ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
