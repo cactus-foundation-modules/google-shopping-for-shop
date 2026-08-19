@@ -1,0 +1,81 @@
+import { randomBytes } from 'crypto'
+import { prisma } from '@/lib/db/prisma'
+import { GSF_CONDITIONS, type GsfCondition, type GsfSettings } from '@/modules/google-shopping-for-shop/lib/types'
+
+function asCondition(value: unknown): GsfCondition {
+  return GSF_CONDITIONS.includes(value as GsfCondition) ? (value as GsfCondition) : 'new'
+}
+
+type SettingsRow = {
+  enabled: boolean
+  feed_token: string | null
+  default_brand: string | null
+  default_condition: string
+}
+
+// A 24-character url-safe shared secret for the feed URL. Long enough that the
+// URL cannot be guessed, short enough to read out over the phone at a push.
+function mintToken(): string {
+  return randomBytes(18).toString('base64url')
+}
+
+/** The settings row, minting the feed token on first read so a URL exists the
+ *  moment the tab is opened. The mint is written with a NULL guard, so two
+ *  concurrent first reads cannot each install their own token. */
+export async function getGsfSettings(): Promise<GsfSettings> {
+  const rows = await prisma.$queryRaw<SettingsRow[]>`
+    SELECT "enabled", "feed_token", "default_brand", "default_condition"
+    FROM "gsf_settings" WHERE "id" = 'singleton'
+  `
+  const row = rows[0]
+  if (!row) {
+    // The migration seeds the singleton; reaching here means it has not run yet.
+    return { enabled: false, feedToken: null, defaultBrand: null, defaultCondition: 'new' }
+  }
+  let feedToken = row.feed_token
+  if (!feedToken) {
+    const fresh = mintToken()
+    await prisma.$executeRaw`
+      UPDATE "gsf_settings" SET "feed_token" = ${fresh}, "updated_at" = CURRENT_TIMESTAMP
+      WHERE "id" = 'singleton' AND "feed_token" IS NULL
+    `
+    // Re-read rather than trust our own value: on a tie the other writer won.
+    const check = await prisma.$queryRaw<Array<{ feed_token: string | null }>>`
+      SELECT "feed_token" FROM "gsf_settings" WHERE "id" = 'singleton'
+    `
+    feedToken = check[0]?.feed_token ?? fresh
+  }
+  return {
+    enabled: row.enabled,
+    feedToken,
+    defaultBrand: row.default_brand,
+    defaultCondition: asCondition(row.default_condition),
+  }
+}
+
+export async function updateGsfSettings(patch: {
+  enabled?: boolean
+  defaultBrand?: string | null
+  defaultCondition?: GsfCondition
+}): Promise<void> {
+  if (patch.enabled !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.defaultBrand !== undefined) {
+    const value = patch.defaultBrand?.trim() || null
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "default_brand" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.defaultCondition !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "default_condition" = ${patch.defaultCondition}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+}
+
+/** Replaces the feed token, cutting off the old URL immediately. For when the
+ *  address has leaked somewhere it should not have. */
+export async function regenerateGsfFeedToken(): Promise<string> {
+  const fresh = mintToken()
+  await prisma.$executeRaw`
+    UPDATE "gsf_settings" SET "feed_token" = ${fresh}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'
+  `
+  return fresh
+}

@@ -1,0 +1,6 @@
+{
+  "name": "cactus-module-google-shopping-for-shop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Google Shopping (Merchant Center) product feed for the Cactus shop module."
+}

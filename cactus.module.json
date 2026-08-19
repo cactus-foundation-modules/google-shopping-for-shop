@@ -1,0 +1,44 @@
+{
+  "name": "google-shopping-for-shop",
+  "version": "0.1.0",
+  "tablePrefix": "gsf_",
+  "description": "Puts your shop on Google Shopping. Serves a product feed for Google Merchant Center in which every variation is its own listing - its own price, photos, stock and link - grouped under its parent product, so a search for the exact size and colour someone wants finds the exact size and colour you sell. Give Google the feed address once and it keeps itself up to date; brand and barcode details can be set per product, and anything you would rather keep off Google can sit the feed out.",
+  "requiresCoreVersion": "0.5.1117",
+  "requiresModules": [
+    {
+      "name": "shop",
+      "minVersion": "0.1.243"
+    },
+    {
+      "name": "shop-variations",
+      "minVersion": "0.1.146"
+    }
+  ],
+  "requiredEnvVars": [],
+  "permissions": [],
+  "navEntries": [],
+  "cookieCategories": [],
+  "publicBasePath": "google-shopping",
+  "settingsTabs": [
+    {
+      "id": "google-shopping-for-shop",
+      "label": "Google Shopping",
+      "permission": "shop.manage",
+      "host": "shop.settings-sub-tabs",
+      "import": "./components/SettingsTab",
+      "component": "GoogleShoppingSettingsTab"
+    }
+  ],
+  "extensionPoints": [
+    {
+      "point": "shop.product-editor-sections",
+      "id": "google-shopping",
+      "label": "Google Shopping",
+      "order": 60,
+      "permission": "shop.products",
+      "import": "./components/ProductGoogleShoppingSection",
+      "component": "ProductGoogleShoppingSection"
+    }
+  ],
+  "teardown": ["gsf_settings", "gsf_product_data"]
+}
