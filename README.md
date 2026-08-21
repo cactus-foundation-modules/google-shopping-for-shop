@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="module-art.webp" alt="Google Shopping for the Cactus Shop" width="640" />
+</p>
+
 # Google Shopping for the Cactus Shop
 
 Puts your shop on Google Shopping. The module serves a product feed for Google
