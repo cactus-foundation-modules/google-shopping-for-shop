@@ -1,8 +1,7 @@
 // Deep links from the product editor into Merchant Center's own item pages.
 //
-// Google publishes no URL contract for its console, only for the API, so the
-// whole shape of the address lives in the one function below: when Merchant
-// Center next reshuffles its query string, that is the only thing to change.
+// The address shape itself lives in lib/merchant-centre-url.ts, kept pure so it
+// can be tested without a database behind it.
 //
 // The offer id is whatever the feed sent as <g:id>, which is the product id of
 // the row the listing came from - the variation's hidden child product where a
@@ -12,12 +11,9 @@ import { Prisma } from '@prisma/client'
 import { getEditorPayload } from '@/modules/shop-variations/lib/variants-service'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductData } from '@/modules/google-shopping-for-shop/lib/product-data'
+import { merchantCentreItemUrl } from '@/modules/google-shopping-for-shop/lib/merchant-centre-url'
 
-const MC_ITEM_URL = 'https://merchantcenter.google.com/mc/items/details'
-
-// Every page of the platform renders in English (app/layout.tsx), so the feed
-// only ever has one content language to declare.
-const CONTENT_LANGUAGE = 'en'
+export { merchantCentreItemUrl }
 
 export type GsfMerchantLink = {
   // The <g:id> the feed publishes for this listing.
@@ -38,20 +34,6 @@ export type GsfMerchantLinksView = {
   // This product sits the feed out on purpose.
   excluded: boolean
   links: GsfMerchantLink[]
-}
-
-/** The address of one item inside Merchant Center. */
-export function merchantCentreItemUrl(opts: { merchantId: string; offerId: string; feedLabel: string | null }): string {
-  const params = new URLSearchParams({
-    a: opts.merchantId,
-    offerId: opts.offerId,
-    channel: 'online',
-    language: CONTENT_LANGUAGE,
-  })
-  // Left off when unknown: Merchant Center then asks which feed is meant, which
-  // is a far better answer than pointing confidently at the wrong country.
-  if (opts.feedLabel) params.set('feedLabel', opts.feedLabel)
-  return `${MC_ITEM_URL}?${params.toString()}`
 }
 
 /** One link per listing this product puts in the feed: one per enabled variation,
