@@ -9,6 +9,25 @@ export type FeedAvailability = 'in_stock' | 'out_of_stock' | 'preorder' | 'backo
 // value: "Oak" }. Which Google axis (if any) it lands on is mapVariantAxes' job.
 export type FeedOptionPair = { name: string; value: string }
 
+/** One delivery service, as Google's repeatable `shipping` attribute wants it:
+ *  a country, a name, a gross price and the days either side of dispatch. */
+export type FeedShippingGroup = {
+  /** ISO 3166-1 alpha-2. Google rejects a group without one. */
+  country: string
+  /** The service's name. Free text - it matches a Merchant Center service where
+   *  one is named the same, and stands on its own where none is. */
+  service: string
+  /** Gross (VAT-inclusive) price in major units. Zero is meaningful: it is what
+   *  tells Google the delivery is free. */
+  price: number
+  /** Working days either side of dispatch for THIS service, overriding the
+   *  item-level pair for it. Sent as a range with both ends equal, same rule. */
+  minHandlingTime?: number
+  maxHandlingTime?: number
+  minTransitTime?: number
+  maxTransitTime?: number
+}
+
 export type FeedVariantAxes = {
   color?: string
   size?: string
@@ -60,6 +79,11 @@ export type FeedItem = {
    *  pre-order or backorder item and ignores it on anything else, so it is only
    *  ever rendered alongside those two availabilities. */
   availabilityDate?: string
+  /** The delivery services this item can be bought with. Google reads several
+   *  and, where more than one reaches the shopper, quotes the cheapest - so the
+   *  free option in the list is what a listing shows. Empty or absent leaves
+   *  the Merchant Center account's own rates in charge, which is the default. */
+  shippingGroups?: FeedShippingGroup[]
   axes?: FeedVariantAxes
 }
 
@@ -148,6 +172,28 @@ function handlingAndTransit(item: FeedItem): string[] {
   ]
 }
 
+// One `g:shipping` block per service. Country and price are the two Google
+// insists on; the day counts ride along where the shop knows them, and a group
+// missing them falls back to the item-level pair rendered above.
+function shippingGroups(item: FeedItem, currency: string): string[] {
+  const usable = (n: number | undefined): n is number => n !== undefined && Number.isInteger(n) && n >= 0
+  const range = (minName: string, maxName: string, min: number | undefined, max: number | undefined): string =>
+    usable(min) && usable(max) ? `<${minName}>${min}</${minName}><${maxName}>${max}</${maxName}>` : ''
+  const inner = (name: string, value: string): string => `<${name}>${escapeXml(value)}</${name}>`
+  return (item.shippingGroups ?? [])
+    .filter((group) => /^[A-Za-z]{2}$/.test(group.country) && group.service.trim() !== '' && Number.isFinite(group.price) && group.price >= 0)
+    .map((group) => {
+      const body = [
+        inner('g:country', group.country.toUpperCase()),
+        inner('g:service', group.service.trim()),
+        inner('g:price', money(group.price, currency)),
+        range('g:min_handling_time', 'g:max_handling_time', group.minHandlingTime, group.maxHandlingTime),
+        range('g:min_transit_time', 'g:max_transit_time', group.minTransitTime, group.maxTransitTime),
+      ].join('')
+      return `\n      <g:shipping>${body}</g:shipping>`
+    })
+}
+
 function renderItem(item: FeedItem): string {
   const [primary, ...rest] = item.imageLinks
   const parts = [
@@ -171,6 +217,7 @@ function renderItem(item: FeedItem): string {
     tag('g:google_product_category', item.googleProductCategory),
     tag('g:shipping_weight', item.shippingWeight),
     ...handlingAndTransit(item),
+    ...shippingGroups(item, item.currency),
     // Only meaningful on the two availabilities where the shop has not got the
     // thing yet; Google disapproves a pre-order item that omits it.
     item.availability === 'preorder' || item.availability === 'backorder'

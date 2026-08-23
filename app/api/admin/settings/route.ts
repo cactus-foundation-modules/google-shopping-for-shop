@@ -5,6 +5,7 @@ import { requireShopUser } from '@/modules/shop/lib/access'
 import { getSiteUrlOrNull } from '@/lib/config/env'
 import { getGsfSettings, regenerateGsfFeedToken, updateGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { GSF_CONDITIONS, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
+import { hasDeliveryTimingProvider } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
 
 async function view(): Promise<GsfSettingsView> {
   const settings = await getGsfSettings()
@@ -17,6 +18,9 @@ async function view(): Promise<GsfSettingsView> {
     defaultCondition: settings.defaultCondition,
     merchantId: settings.merchantId ?? '',
     feedLabel: settings.feedLabel ?? '',
+    sendDeliveryOptions: settings.sendDeliveryOptions,
+    shippingCountry: settings.shippingCountry,
+    deliveryOptionsAvailable: hasDeliveryTimingProvider(),
   }
 }
 
@@ -35,6 +39,9 @@ const PatchBody = z.object({
   // only stop a paste of half a page ending up in the column.
   merchantId: z.string().max(40).optional(),
   feedLabel: z.string().max(40).optional(),
+  sendDeliveryOptions: z.boolean().optional(),
+  // Normalised to two upper-case letters server-side; anything else becomes GB.
+  shippingCountry: z.string().max(8).optional(),
   // Cuts the old feed URL off immediately and mints a fresh one.
   regenerateToken: z.boolean().optional(),
 })
@@ -52,6 +59,8 @@ export async function PATCH(request: NextRequest) {
     defaultCondition: body.defaultCondition,
     merchantId: body.merchantId,
     feedLabel: body.feedLabel,
+    sendDeliveryOptions: body.sendDeliveryOptions,
+    shippingCountry: body.shippingCountry,
   })
   if (body.regenerateToken) await regenerateGsfFeedToken()
   return NextResponse.json({ settings: await view() })

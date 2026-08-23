@@ -31,6 +31,11 @@ modules.
   stay out of the feed automatically. Sale prices travel as sale prices.
 - Brand runs in order: whatever the product's own Google Shopping tab says, then
   the product's supplier, then the shop-wide default.
+- Where a delivery module publishes them, each product carries its own dispatch
+  and delivery times - and, if you switch it on, its own delivery charges: one
+  shipping group per service the product is sold with, priced VAT-inclusive.
+  Off by default, because item-level charges override your Merchant Center
+  delivery rates for everything in the feed.
 
 ## Setting up
 

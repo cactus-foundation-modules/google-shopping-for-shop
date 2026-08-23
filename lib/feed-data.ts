@@ -256,6 +256,10 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       .map((m) => m.url)
 
   const items: FeedItem[] = []
+  // The tax class each finished item was priced under, so the delivery pass at
+  // the bottom can gross up a service charge exactly as the item's own price was
+  // grossed - the charge is folded into the line and taxed at the product's rate.
+  const taxClassByItem = new Map<string, string | null>()
 
   // ----- One item per enabled variant ---------------------------------------
   for (const parent of parents) {
@@ -282,6 +286,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       const priced = { price: variant.price, salePrice: variant.salePrice }
       const onSale = isOnSale(priced, config.enabledPriceTypes)
       const taxClassId = child.tax_class_id ?? parent.tax_class_id
+      taxClassByItem.set(variant.childProductId, taxClassId)
 
       items.push({
         id: variant.childProductId,
@@ -314,6 +319,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     const data = productData.get(product.id)
     if (data?.excluded) continue
     const onSale = isOnSale(product, config.enabledPriceTypes)
+    taxClassByItem.set(product.id, product.taxClassId)
 
     items.push({
       id: product.id,
@@ -354,6 +360,22 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     item.minTransitTime = times.transitDays
     item.maxTransitTime = times.transitDays
     if (times.availabilityDate) item.availabilityDate = times.availabilityDate
+
+    // Each service the product is sold with, as its own shipping group. Off by
+    // default and left alone here when off: an item carrying its own groups
+    // overrides the Merchant Center account's rates for that item, so it is the
+    // owner's call rather than something the feed starts doing on its own.
+    if (!settings.sendDeliveryOptions || times.options.length === 0) continue
+    const taxClassId = taxClassByItem.get(item.id) ?? null
+    item.shippingGroups = times.options.map((option) => ({
+      country: settings.shippingCountry,
+      service: option.label,
+      price: gross(option.price, taxClassId),
+      minHandlingTime: option.handlingDays,
+      maxHandlingTime: option.handlingDays,
+      minTransitTime: option.transitDays,
+      maxTransitTime: option.transitDays,
+    }))
   }
 
   return items

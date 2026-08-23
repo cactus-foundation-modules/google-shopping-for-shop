@@ -40,6 +40,7 @@ export function GoogleShoppingSettingsTab() {
   const [brandDraft, setBrandDraft] = useState('')
   const [merchantDraft, setMerchantDraft] = useState('')
   const [feedLabelDraft, setFeedLabelDraft] = useState('')
+  const [countryDraft, setCountryDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -54,6 +55,7 @@ export function GoogleShoppingSettingsTab() {
       setBrandDraft(body.settings.defaultBrand)
       setMerchantDraft(body.settings.merchantId)
       setFeedLabelDraft(body.settings.feedLabel)
+      setCountryDraft(body.settings.shippingCountry)
     } catch {
       setError('Could not load Google Shopping settings.')
     }
@@ -70,7 +72,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -86,6 +88,7 @@ export function GoogleShoppingSettingsTab() {
       setBrandDraft(body.settings.defaultBrand)
       setMerchantDraft(body.settings.merchantId)
       setFeedLabelDraft(body.settings.feedLabel)
+      setCountryDraft(body.settings.shippingCountry)
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -210,6 +213,59 @@ export function GoogleShoppingSettingsTab() {
             </button>
           </div>
           <span style={hint}>Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
+        </label>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Delivery</h3>
+        <span style={hint}>
+          Google can be told your own delivery charges and how long each service takes, product by product, instead of working from the
+          flat rates set up in your Merchant Center account.
+        </span>
+        {!settings.deliveryOptionsAvailable && (
+          <p style={{ ...hint, marginTop: '0.75rem' }}>
+            Nothing on this site publishes delivery services at the moment, so there is nothing for the switch below to send. Install a
+            delivery module and it fills itself in.
+          </p>
+        )}
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.sendDeliveryOptions}
+            disabled={saving || !settings.deliveryOptionsAvailable}
+            onChange={(e) => void save({ sendDeliveryOptions: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your delivery charges with each product</span>
+            <span style={hint}>
+              Every service a product can be bought with goes along with it, priced and dated. Google quotes the cheapest one a shopper
+              can have, so a product with a free option is advertised as free delivery. Worth knowing: while this is on, your Merchant
+              Center delivery rates no longer apply to anything in the feed - these charges do.
+            </span>
+          </span>
+        </label>
+        <label style={{ display: 'block', marginTop: '1rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Country these charges apply to</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={countryDraft}
+              placeholder="GB"
+              maxLength={2}
+              onChange={(e) => setCountryDraft(e.target.value.toUpperCase())}
+              style={{ ...inputStyle, maxWidth: 120 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={saving || countryDraft === settings.shippingCountry}
+              onClick={() => void save({ shippingCountry: countryDraft })}
+            >
+              Save country
+            </button>
+          </div>
+          <span style={hint}>Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
         </label>
       </section>
 

@@ -14,6 +14,15 @@ type SettingsRow = {
   default_condition: string
   merchant_id: string | null
   feed_label: string | null
+  send_delivery_options: boolean
+  shipping_country: string | null
+}
+
+// A country Google will take on a shipping group: two letters, upper case.
+// Anything else falls back to GB rather than sending a group Google rejects.
+export function asShippingCountry(value: unknown): string {
+  const code = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  return /^[A-Z]{2}$/.test(code) ? code : 'GB'
 }
 
 // A 24-character url-safe shared secret for the feed URL. Long enough that the
@@ -28,13 +37,13 @@ function mintToken(): string {
 export async function getGsfSettings(): Promise<GsfSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
     SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition",
-           "merchant_id", "feed_label"
+           "merchant_id", "feed_label", "send_delivery_options", "shipping_country"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
   if (!row) {
     // The migration seeds the singleton; reaching here means it has not run yet.
-    return { enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true, defaultCondition: 'new', merchantId: null, feedLabel: null }
+    return { enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true, defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false, shippingCountry: 'GB' }
   }
   let feedToken = row.feed_token
   if (!feedToken) {
@@ -57,6 +66,8 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     defaultCondition: asCondition(row.default_condition),
     merchantId: row.merchant_id,
     feedLabel: row.feed_label,
+    sendDeliveryOptions: row.send_delivery_options,
+    shippingCountry: asShippingCountry(row.shipping_country),
   }
 }
 
@@ -67,6 +78,8 @@ export async function updateGsfSettings(patch: {
   defaultCondition?: GsfCondition
   merchantId?: string | null
   feedLabel?: string | null
+  sendDeliveryOptions?: boolean
+  shippingCountry?: string
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -91,6 +104,13 @@ export async function updateGsfSettings(patch: {
   if (patch.feedLabel !== undefined) {
     const value = patch.feedLabel?.trim() || null
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "feed_label" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.sendDeliveryOptions !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "send_delivery_options" = ${patch.sendDeliveryOptions}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.shippingCountry !== undefined) {
+    const value = asShippingCountry(patch.shippingCountry)
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "shipping_country" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 

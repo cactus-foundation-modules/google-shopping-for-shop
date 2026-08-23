@@ -110,6 +110,51 @@ describe('buildFeedXml', () => {
     ])
     expect(xml.match(/<g:additional_image_link>/g)?.length).toBe(10)
   })
+
+  it('renders one shipping group per delivery service, free included', () => {
+    const xml = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [
+      {
+        ...baseItem,
+        shippingGroups: [
+          { country: 'GB', service: 'Flat-Pack', price: 0, minHandlingTime: 1, maxHandlingTime: 1, minTransitTime: 5, maxTransitTime: 5 },
+          { country: 'GB', service: 'Express Flat-Pack', price: 21, minHandlingTime: 1, maxHandlingTime: 1, minTransitTime: 1, maxTransitTime: 1 },
+        ],
+      },
+    ])
+    expect(xml.match(/<g:shipping>/g)?.length).toBe(2)
+    expect(xml).toContain('<g:shipping><g:country>GB</g:country><g:service>Flat-Pack</g:service><g:price>0.00 GBP</g:price><g:min_handling_time>1</g:min_handling_time><g:max_handling_time>1</g:max_handling_time><g:min_transit_time>5</g:min_transit_time><g:max_transit_time>5</g:max_transit_time></g:shipping>')
+    expect(xml).toContain('<g:service>Express Flat-Pack</g:service><g:price>21.00 GBP</g:price>')
+  })
+
+  it('escapes a service name and upper-cases the country', () => {
+    const xml = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [
+      { ...baseItem, shippingGroups: [{ country: 'gb', service: 'Delivery & Assembly', price: 62.28 }] },
+    ])
+    expect(xml).toContain('<g:country>GB</g:country><g:service>Delivery &amp; Assembly</g:service><g:price>62.28 GBP</g:price>')
+    // No day counts on the group: it falls back to the item-level pair.
+    expect(xml).not.toContain('<g:price>62.28 GBP</g:price><g:min_handling_time>')
+  })
+
+  it('drops a group Google would reject rather than the whole item', () => {
+    const xml = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [
+      {
+        ...baseItem,
+        shippingGroups: [
+          { country: 'GBR', service: 'Bad country', price: 5 },
+          { country: 'GB', service: '  ', price: 5 },
+          { country: 'GB', service: 'Negative', price: -1 },
+          { country: 'GB', service: 'Installation', price: 26 },
+        ],
+      },
+    ])
+    expect(xml.match(/<g:shipping>/g)?.length).toBe(1)
+    expect(xml).toContain('<g:service>Installation</g:service>')
+  })
+
+  it('leaves shipping groups off entirely when there are none', () => {
+    const xml = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [baseItem])
+    expect(xml).not.toContain('<g:shipping>')
+  })
 })
 
 describe('mapVariantAxes', () => {

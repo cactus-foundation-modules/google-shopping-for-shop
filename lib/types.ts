@@ -21,6 +21,14 @@ export type GsfSettings = {
   // country the shop sells into. Null leaves it off the link, which Merchant
   // Center answers by asking which feed is meant.
   feedLabel: string | null
+  // Send each item's own delivery services and prices, taken from whichever
+  // module publishes them. Off by default: an item carrying its own shipping
+  // groups OVERRIDES the Merchant Center account's rates for that item, so it
+  // is the owner's decision, not a default.
+  sendDeliveryOptions: boolean
+  // The country those prices apply to, ISO 3166-1 alpha-2. Google requires one
+  // on every shipping group and has no default of its own.
+  shippingCountry: string
 }
 
 // What the admin settings tab sees. The full feed URL is composed server-side so
@@ -33,6 +41,12 @@ export type GsfSettingsView = {
   defaultCondition: GsfCondition
   merchantId: string
   feedLabel: string
+  sendDeliveryOptions: boolean
+  shippingCountry: string
+  // Whether a module publishing delivery services is actually installed. False
+  // makes the switch above a promise nothing can keep, so the tab says so
+  // instead of leaving the owner wondering why the feed looks unchanged.
+  deliveryOptionsAvailable: boolean
 }
 
 // Per-product Google fields, as stored (gsf_product_data). All-null plus
