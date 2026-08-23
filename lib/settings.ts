@@ -12,6 +12,8 @@ type SettingsRow = {
   default_brand: string | null
   brand_from_supplier: boolean
   default_condition: string
+  merchant_id: string | null
+  feed_label: string | null
 }
 
 // A 24-character url-safe shared secret for the feed URL. Long enough that the
@@ -25,13 +27,14 @@ function mintToken(): string {
  *  concurrent first reads cannot each install their own token. */
 export async function getGsfSettings(): Promise<GsfSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
-    SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition"
+    SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition",
+           "merchant_id", "feed_label"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
   if (!row) {
     // The migration seeds the singleton; reaching here means it has not run yet.
-    return { enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true, defaultCondition: 'new' }
+    return { enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true, defaultCondition: 'new', merchantId: null, feedLabel: null }
   }
   let feedToken = row.feed_token
   if (!feedToken) {
@@ -52,6 +55,8 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     defaultBrand: row.default_brand,
     brandFromSupplier: row.brand_from_supplier,
     defaultCondition: asCondition(row.default_condition),
+    merchantId: row.merchant_id,
+    feedLabel: row.feed_label,
   }
 }
 
@@ -60,6 +65,8 @@ export async function updateGsfSettings(patch: {
   defaultBrand?: string | null
   brandFromSupplier?: boolean
   defaultCondition?: GsfCondition
+  merchantId?: string | null
+  feedLabel?: string | null
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -73,6 +80,17 @@ export async function updateGsfSettings(patch: {
   }
   if (patch.defaultCondition !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "default_condition" = ${patch.defaultCondition}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.merchantId !== undefined) {
+    // Merchant Center account numbers are digits; owners paste them with spaces,
+    // hyphens or an "ID:" in front, so keep only the digits and treat nothing
+    // left as "not set".
+    const value = patch.merchantId?.replace(/\D+/g, '') || null
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "merchant_id" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.feedLabel !== undefined) {
+    const value = patch.feedLabel?.trim() || null
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "feed_label" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 

@@ -15,6 +15,8 @@ async function view(): Promise<GsfSettingsView> {
     defaultBrand: settings.defaultBrand ?? '',
     brandFromSupplier: settings.brandFromSupplier,
     defaultCondition: settings.defaultCondition,
+    merchantId: settings.merchantId ?? '',
+    feedLabel: settings.feedLabel ?? '',
   }
 }
 
@@ -29,6 +31,10 @@ const PatchBody = z.object({
   defaultBrand: z.string().max(70).optional(),
   brandFromSupplier: z.boolean().optional(),
   defaultCondition: z.enum(GSF_CONDITIONS).optional(),
+  // The account number is reduced to its digits server-side; the length caps
+  // only stop a paste of half a page ending up in the column.
+  merchantId: z.string().max(40).optional(),
+  feedLabel: z.string().max(40).optional(),
   // Cuts the old feed URL off immediately and mints a fresh one.
   regenerateToken: z.boolean().optional(),
 })
@@ -44,6 +50,8 @@ export async function PATCH(request: NextRequest) {
     defaultBrand: body.defaultBrand,
     brandFromSupplier: body.brandFromSupplier,
     defaultCondition: body.defaultCondition,
+    merchantId: body.merchantId,
+    feedLabel: body.feedLabel,
   })
   if (body.regenerateToken) await regenerateGsfFeedToken()
   return NextResponse.json({ settings: await view() })

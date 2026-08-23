@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS "gsf_settings" (
     -- Google's condition attribute when a product does not say otherwise. A shop
     -- selling seconds can flip individual products via gsf_product_data.
     "default_condition" TEXT NOT NULL DEFAULT 'new',
+    -- The Merchant Center account the feed is filed under, and the feed label
+    -- Google files it against. Used only to build the deep links on each
+    -- product's Google Shopping tab; the feed itself never needs them.
+    "merchant_id" TEXT,
+    "feed_label" TEXT,
     "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "gsf_settings_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "gsf_settings_singleton_check" CHECK ("id" = 'singleton')

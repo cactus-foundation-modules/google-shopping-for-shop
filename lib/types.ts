@@ -13,6 +13,14 @@ export type GsfSettings = {
   // (shp_products.supplier), ahead of defaultBrand. Off, the supplier is ignored.
   brandFromSupplier: boolean
   defaultCondition: GsfCondition
+  // The Merchant Center account number the feed is filed under, digits only.
+  // Null until typed in, which is the only thing standing between a product and
+  // a link straight to its Google listing.
+  merchantId: string | null
+  // The feed label Google files this feed against, usually the two-letter
+  // country the shop sells into. Null leaves it off the link, which Merchant
+  // Center answers by asking which feed is meant.
+  feedLabel: string | null
 }
 
 // What the admin settings tab sees. The full feed URL is composed server-side so
@@ -23,6 +31,8 @@ export type GsfSettingsView = {
   defaultBrand: string
   brandFromSupplier: boolean
   defaultCondition: GsfCondition
+  merchantId: string
+  feedLabel: string
 }
 
 // Per-product Google fields, as stored (gsf_product_data). All-null plus

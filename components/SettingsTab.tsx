@@ -38,6 +38,8 @@ const CONDITION_LABELS: Record<GsfCondition, string> = {
 export function GoogleShoppingSettingsTab() {
   const [settings, setSettings] = useState<GsfSettingsView | null>(null)
   const [brandDraft, setBrandDraft] = useState('')
+  const [merchantDraft, setMerchantDraft] = useState('')
+  const [feedLabelDraft, setFeedLabelDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -50,6 +52,8 @@ export function GoogleShoppingSettingsTab() {
       const body = (await res.json()) as { settings: GsfSettingsView }
       setSettings(body.settings)
       setBrandDraft(body.settings.defaultBrand)
+      setMerchantDraft(body.settings.merchantId)
+      setFeedLabelDraft(body.settings.feedLabel)
     } catch {
       setError('Could not load Google Shopping settings.')
     }
@@ -66,7 +70,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -80,6 +84,8 @@ export function GoogleShoppingSettingsTab() {
       if (!res.ok || !body.settings) throw new Error(body.error ?? 'Save failed')
       setSettings(body.settings)
       setBrandDraft(body.settings.defaultBrand)
+      setMerchantDraft(body.settings.merchantId)
+      setFeedLabelDraft(body.settings.feedLabel)
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -154,6 +160,57 @@ export function GoogleShoppingSettingsTab() {
           </button>
           <span style={hint}>The address carries its own key, so only Google and you know it. If it leaks, mint a new one.</span>
         </div>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Your Merchant Center account</h3>
+        <span style={hint}>
+          Fill these in and every product gains a link straight to its own listing in Merchant Center, one per variation, on the
+          product&apos;s Google Shopping tab. Nothing else depends on them - the feed works perfectly well without.
+        </span>
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Account number</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={merchantDraft}
+              placeholder="e.g. 123456789"
+              onChange={(e) => setMerchantDraft(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 220 }}
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving || merchantDraft === settings.merchantId}
+              onClick={() => void save({ merchantId: merchantDraft })}
+            >
+              Save account
+            </button>
+          </div>
+          <span style={hint}>Merchant Center shows it at the top right of its own pages. Spaces and dashes are fine - only the numbers are kept.</span>
+        </label>
+        <label style={{ display: 'block', marginTop: '1rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Feed label</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={feedLabelDraft}
+              placeholder="e.g. GB"
+              onChange={(e) => setFeedLabelDraft(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 160 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={saving || feedLabelDraft === settings.feedLabel}
+              onClick={() => void save({ feedLabel: feedLabelDraft })}
+            >
+              Save label
+            </button>
+          </div>
+          <span style={hint}>Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
+        </label>
       </section>
 
       <section style={card}>
