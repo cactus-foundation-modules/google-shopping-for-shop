@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // actually installed, so the test stands one in - the seam being checked here is
 // what happens to a provider's answer, not how it was found.
 const registry: Record<string, Record<string, unknown>> = {}
-vi.mock('@/lib/modules/extension-points', () => ({ moduleExtensionPointComponents: registry }))
+vi.mock('@/lib/modules/extension-points.public', () => ({ modulePublicExtensionPointComponents: registry }))
 
 const POINT = 'shop.product-delivery-timing'
 

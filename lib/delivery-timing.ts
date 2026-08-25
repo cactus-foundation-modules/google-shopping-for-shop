@@ -10,7 +10,7 @@
 // and nothing here has a path to a module that is not there. Importing
 // '@/modules/advanced-shipping-for-shop/...' directly would break the build on
 // every install that has not got it.
-import { moduleExtensionPointComponents } from '@/lib/modules/extension-points'
+import { modulePublicExtensionPointComponents as moduleExtensionPointComponents } from '@/lib/modules/extension-points.public'
 
 const POINT = 'shop.product-delivery-timing'
 
