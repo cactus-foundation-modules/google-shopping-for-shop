@@ -4,15 +4,17 @@ import { z } from 'zod'
 import { requireShopUser } from '@/modules/shop/lib/access'
 import { getSiteUrlOrNull } from '@/lib/config/env'
 import { getGsfSettings, regenerateGsfFeedToken, updateGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
-import { GSF_CONDITIONS, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
+import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { hasDeliveryTimingProvider } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
+import { hasReviewsProvider } from '@/modules/google-shopping-for-shop/lib/reviews-source'
 
 async function view(): Promise<GsfSettingsView> {
   const settings = await getGsfSettings()
   const siteUrl = getSiteUrlOrNull()
+  const base = siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null
   return {
     enabled: settings.enabled,
-    feedUrl: siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null,
+    feedUrl: base,
     defaultBrand: settings.defaultBrand ?? '',
     brandFromSupplier: settings.brandFromSupplier,
     defaultCondition: settings.defaultCondition,
@@ -21,6 +23,14 @@ async function view(): Promise<GsfSettingsView> {
     sendDeliveryOptions: settings.sendDeliveryOptions,
     shippingCountry: settings.shippingCountry,
     deliveryOptionsAvailable: hasDeliveryTimingProvider(),
+    reviewsFeedEnabled: settings.reviewsFeedEnabled,
+    // The same address as the product feed, one parameter apart - see the
+    // route's own note on why there is not a second file name.
+    reviewsFeedUrl: base ? `${base}&content=reviews` : null,
+    reviewsAvailable: hasReviewsProvider(),
+    customerReviewsEnabled: settings.customerReviewsEnabled,
+    customerReviewsStyle: settings.customerReviewsStyle,
+    customerReviewsDeliveryDays: settings.customerReviewsDeliveryDays,
   }
 }
 
@@ -42,6 +52,12 @@ const PatchBody = z.object({
   sendDeliveryOptions: z.boolean().optional(),
   // Normalised to two upper-case letters server-side; anything else becomes GB.
   shippingCountry: z.string().max(8).optional(),
+  reviewsFeedEnabled: z.boolean().optional(),
+  customerReviewsEnabled: z.boolean().optional(),
+  customerReviewsStyle: z.enum(GSF_OPT_IN_STYLES).optional(),
+  // Clamped to something sane server-side; this only stops a paste of War and
+  // Peace reaching the column.
+  customerReviewsDeliveryDays: z.number().int().min(0).max(365).optional(),
   // Cuts the old feed URL off immediately and mints a fresh one.
   regenerateToken: z.boolean().optional(),
 })
@@ -61,6 +77,10 @@ export async function PATCH(request: NextRequest) {
     feedLabel: body.feedLabel,
     sendDeliveryOptions: body.sendDeliveryOptions,
     shippingCountry: body.shippingCountry,
+    reviewsFeedEnabled: body.reviewsFeedEnabled,
+    customerReviewsEnabled: body.customerReviewsEnabled,
+    customerReviewsStyle: body.customerReviewsStyle,
+    customerReviewsDeliveryDays: body.customerReviewsDeliveryDays,
   })
   if (body.regenerateToken) await regenerateGsfFeedToken()
   return NextResponse.json({ settings: await view() })

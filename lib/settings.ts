@@ -1,9 +1,25 @@
 import { randomBytes } from 'crypto'
 import { prisma } from '@/lib/db/prisma'
-import { GSF_CONDITIONS, type GsfCondition, type GsfSettings } from '@/modules/google-shopping-for-shop/lib/types'
+import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfOptInStyle, type GsfSettings } from '@/modules/google-shopping-for-shop/lib/types'
 
 function asCondition(value: unknown): GsfCondition {
   return GSF_CONDITIONS.includes(value as GsfCondition) ? (value as GsfCondition) : 'new'
+}
+
+// A position Google's own script understands. Anything else falls back to the
+// middle of the page, which is both Google's default and the placement they say
+// gets opted into most.
+export function asOptInStyle(value: unknown): GsfOptInStyle {
+  return GSF_OPT_IN_STYLES.includes(value as GsfOptInStyle) ? (value as GsfOptInStyle) : 'CENTER_DIALOG'
+}
+
+// Working days between order and doorstep. Whole, positive, and short of a
+// year: the figure only ever becomes a date on a survey invitation, and a
+// nonsense one there is a survey nobody is ever asked to fill in.
+export function asDeliveryDays(value: unknown): number {
+  const days = typeof value === 'number' ? Math.round(value) : Number.NaN
+  if (!Number.isFinite(days)) return 5
+  return Math.min(365, Math.max(0, days))
 }
 
 type SettingsRow = {
@@ -16,6 +32,10 @@ type SettingsRow = {
   feed_label: string | null
   send_delivery_options: boolean
   shipping_country: string | null
+  reviews_feed_enabled: boolean
+  customer_reviews_enabled: boolean
+  customer_reviews_style: string | null
+  customer_reviews_delivery_days: number
 }
 
 // A country Google will take on a shipping group: two letters, upper case.
@@ -37,13 +57,20 @@ function mintToken(): string {
 export async function getGsfSettings(): Promise<GsfSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
     SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition",
-           "merchant_id", "feed_label", "send_delivery_options", "shipping_country"
+           "merchant_id", "feed_label", "send_delivery_options", "shipping_country",
+           "reviews_feed_enabled", "customer_reviews_enabled", "customer_reviews_style",
+           "customer_reviews_delivery_days"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
   if (!row) {
     // The migration seeds the singleton; reaching here means it has not run yet.
-    return { enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true, defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false, shippingCountry: 'GB' }
+    return {
+      enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true,
+      defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false,
+      shippingCountry: 'GB', reviewsFeedEnabled: false, customerReviewsEnabled: false,
+      customerReviewsStyle: 'CENTER_DIALOG', customerReviewsDeliveryDays: 5,
+    }
   }
   let feedToken = row.feed_token
   if (!feedToken) {
@@ -68,6 +95,10 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     feedLabel: row.feed_label,
     sendDeliveryOptions: row.send_delivery_options,
     shippingCountry: asShippingCountry(row.shipping_country),
+    reviewsFeedEnabled: row.reviews_feed_enabled,
+    customerReviewsEnabled: row.customer_reviews_enabled,
+    customerReviewsStyle: asOptInStyle(row.customer_reviews_style),
+    customerReviewsDeliveryDays: asDeliveryDays(Number(row.customer_reviews_delivery_days)),
   }
 }
 
@@ -80,6 +111,10 @@ export async function updateGsfSettings(patch: {
   feedLabel?: string | null
   sendDeliveryOptions?: boolean
   shippingCountry?: string
+  reviewsFeedEnabled?: boolean
+  customerReviewsEnabled?: boolean
+  customerReviewsStyle?: GsfOptInStyle
+  customerReviewsDeliveryDays?: number
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -111,6 +146,20 @@ export async function updateGsfSettings(patch: {
   if (patch.shippingCountry !== undefined) {
     const value = asShippingCountry(patch.shippingCountry)
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "shipping_country" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.reviewsFeedEnabled !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "reviews_feed_enabled" = ${patch.reviewsFeedEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.customerReviewsEnabled !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "customer_reviews_enabled" = ${patch.customerReviewsEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.customerReviewsStyle !== undefined) {
+    const value = asOptInStyle(patch.customerReviewsStyle)
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "customer_reviews_style" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.customerReviewsDeliveryDays !== undefined) {
+    const value = asDeliveryDays(patch.customerReviewsDeliveryDays)
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "customer_reviews_delivery_days" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 

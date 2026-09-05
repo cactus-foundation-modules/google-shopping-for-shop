@@ -3,6 +3,19 @@
 export const GSF_CONDITIONS = ['new', 'refurbished', 'used'] as const
 export type GsfCondition = (typeof GSF_CONDITIONS)[number]
 
+// Where Google's survey opt-in sits on the order confirmation page. These are
+// Google's own values, spelled their way, because each one travels verbatim
+// into the snippet their script reads.
+export const GSF_OPT_IN_STYLES = [
+  'CENTER_DIALOG',
+  'BOTTOM_RIGHT_DIALOG',
+  'BOTTOM_LEFT_DIALOG',
+  'TOP_RIGHT_DIALOG',
+  'TOP_LEFT_DIALOG',
+  'BOTTOM_TRAY',
+] as const
+export type GsfOptInStyle = (typeof GSF_OPT_IN_STYLES)[number]
+
 export type GsfSettings = {
   enabled: boolean
   // Null until first read mints one (lib/settings.ts). The feed route refuses to
@@ -29,6 +42,19 @@ export type GsfSettings = {
   // The country those prices apply to, ISO 3166-1 alpha-2. Google requires one
   // on every shipping group and has no default of its own.
   shippingCountry: string
+  // Serve the product REVIEW feed as well as the product feed. Separate switch
+  // and separate address: a shop may want its products on Google without
+  // republishing what customers wrote about them.
+  reviewsFeedEnabled: boolean
+  // Show Google's own survey opt-in on the order confirmation page (Google
+  // Customer Reviews). Off by default - it hands the customer's email to Google
+  // so they can be surveyed after delivery, which is the owner's call.
+  customerReviewsEnabled: boolean
+  customerReviewsStyle: GsfOptInStyle
+  // Working days from order to doorstep, used for the opt-in's estimated
+  // delivery date where nothing on the site publishes real delivery timing.
+  // Google requires a date and has no default of its own.
+  customerReviewsDeliveryDays: number
 }
 
 // What the admin settings tab sees. The full feed URL is composed server-side so
@@ -47,6 +73,15 @@ export type GsfSettingsView = {
   // makes the switch above a promise nothing can keep, so the tab says so
   // instead of leaving the owner wondering why the feed looks unchanged.
   deliveryOptionsAvailable: boolean
+  reviewsFeedEnabled: boolean
+  // The review feed's own address, null for the same reasons as feedUrl above.
+  reviewsFeedUrl: string | null
+  // Whether any installed module publishes customer reviews at all. False makes
+  // the review feed a document with nothing in it, so the tab says so.
+  reviewsAvailable: boolean
+  customerReviewsEnabled: boolean
+  customerReviewsStyle: GsfOptInStyle
+  customerReviewsDeliveryDays: number
 }
 
 // Per-product Google fields, as stored (gsf_product_data). All-null plus

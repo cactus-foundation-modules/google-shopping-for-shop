@@ -36,6 +36,17 @@ modules.
   shipping group per service the product is sold with, priced VAT-inclusive.
   Off by default, because item-level charges override your Merchant Center
   delivery rates for everything in the feed.
+- Serves a **product review feed** at the same address plus `&content=reviews`,
+  in Google's product reviews schema 2.3, from whichever module publishes the
+  shop's reviews (extension point `shop.product-reviews` - Reviews for Shop
+  today). Published reviews only, and nothing about a product the feed excludes.
+  Optional companion, not a dependency: no reviews module, no feed, no build
+  error.
+- Offers **Google Customer Reviews** on the order confirmation page: Google's own
+  survey opt-in, which is where a seller rating comes from. The block is placed
+  on the confirmation layout at install; the order's email reaches Google only
+  after the page proves, with the order's signed receipt token, that it is that
+  customer's order.
 
 ## Setting up
 

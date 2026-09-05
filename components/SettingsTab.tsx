@@ -3,7 +3,7 @@
 // Sub-tab of shop's settings tab, hosted through 'shop.settings-sub-tabs'.
 // Shop lends the space and nothing else: own fetch, own save, own module API.
 import { useCallback, useEffect, useState } from 'react'
-import { GSF_CONDITIONS, type GsfCondition, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
+import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -35,15 +35,27 @@ const CONDITION_LABELS: Record<GsfCondition, string> = {
   used: 'Used',
 }
 
+// Google's own placements, in the plainest English each one deserves. The
+// values are Google's and travel into their script untouched.
+const OPT_IN_STYLE_LABELS: Record<GsfOptInStyle, string> = {
+  CENTER_DIALOG: 'Middle of the page (Google recommends this)',
+  BOTTOM_RIGHT_DIALOG: 'Bottom right corner',
+  BOTTOM_LEFT_DIALOG: 'Bottom left corner',
+  TOP_RIGHT_DIALOG: 'Top right corner',
+  TOP_LEFT_DIALOG: 'Top left corner',
+  BOTTOM_TRAY: 'A tray along the bottom',
+}
+
 export function GoogleShoppingSettingsTab() {
   const [settings, setSettings] = useState<GsfSettingsView | null>(null)
   const [brandDraft, setBrandDraft] = useState('')
   const [merchantDraft, setMerchantDraft] = useState('')
   const [feedLabelDraft, setFeedLabelDraft] = useState('')
   const [countryDraft, setCountryDraft] = useState('')
+  const [deliveryDaysDraft, setDeliveryDaysDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'products' | 'reviews' | null>(null)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -56,6 +68,7 @@ export function GoogleShoppingSettingsTab() {
       setMerchantDraft(body.settings.merchantId)
       setFeedLabelDraft(body.settings.feedLabel)
       setCountryDraft(body.settings.shippingCountry)
+      setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
     } catch {
       setError('Could not load Google Shopping settings.')
     }
@@ -72,7 +85,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -89,6 +102,7 @@ export function GoogleShoppingSettingsTab() {
       setMerchantDraft(body.settings.merchantId)
       setFeedLabelDraft(body.settings.feedLabel)
       setCountryDraft(body.settings.shippingCountry)
+      setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -97,11 +111,11 @@ export function GoogleShoppingSettingsTab() {
     }
   }
 
-  async function copyFeedUrl(url: string) {
+  async function copyFeedUrl(url: string, which: 'products' | 'reviews') {
     try {
       await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setCopied(which)
+      setTimeout(() => setCopied(null), 2000)
     } catch {
       setError('Could not copy - select the address and copy it by hand.')
     }
@@ -141,8 +155,8 @@ export function GoogleShoppingSettingsTab() {
         {settings.feedUrl ? (
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
             <input type="text" readOnly value={settings.feedUrl} onFocus={(e) => e.target.select()} style={{ ...inputStyle, maxWidth: 560 }} />
-            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.feedUrl!)}>
-              {copied ? 'Copied' : 'Copy'}
+            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.feedUrl!, 'products')}>
+              {copied === 'products' ? 'Copied' : 'Copy'}
             </button>
           </div>
         ) : (
@@ -267,6 +281,121 @@ export function GoogleShoppingSettingsTab() {
           </div>
           <span style={hint}>Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
         </label>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Customer reviews on Google</h3>
+        <span style={hint}>
+          Two separate things, and a shop can have either on its own: sending Google the reviews people leave here, and letting Google
+          ask your customers for one after their order arrives.
+        </span>
+
+        <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.25rem' }}>Send your reviews to Google</h4>
+        {!settings.reviewsAvailable && (
+          <p style={{ ...hint, marginTop: '0.5rem' }}>
+            Nothing on this site collects reviews at the moment, so there would be nothing to send. Install a reviews module and this
+            fills itself in.
+          </p>
+        )}
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.reviewsFeedEnabled}
+            disabled={saving || !settings.reviewsAvailable}
+            onChange={(e) => void save({ reviewsFeedEnabled: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Serve the review feed</span>
+            <span style={hint}>
+              Every review you have published, with the star rating, the wording and the reviewer&apos;s first name, offered to Google so
+              the stars show on your listings. Reviews you have not published, and anything about a product you keep out of the feed, stay
+              here. Worth knowing: Google republishes what it is given, so this is you deciding your customers&apos; words may appear on
+              their pages.
+            </span>
+          </span>
+        </label>
+        {settings.reviewsFeedUrl ? (
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+            <input type="text" readOnly value={settings.reviewsFeedUrl} onFocus={(e) => e.target.select()} style={{ ...inputStyle, maxWidth: 560 }} />
+            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.reviewsFeedUrl!, 'reviews')}>
+              {copied === 'reviews' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ) : (
+          <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
+        )}
+        <span style={hint}>
+          Goes in Merchant Center as a second data source, the product reviews one - not in place of the product feed above. Google asks
+          to be let into the programme before it will read it, which is a form on their side, not a switch on ours.
+        </span>
+
+        <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.5rem' }}>Ask customers for a review</h4>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.customerReviewsEnabled}
+            disabled={saving}
+            onChange={(e) => void save({ customerReviewsEnabled: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Offer Google&apos;s survey when an order is placed</span>
+            <span style={hint}>
+              Once somebody has paid, Google asks whether they would like to be surveyed after their delivery. Say yes and Google emails
+              them nearer the time, which is where the star rating beside your name in adverts comes from. Switching this on shares the
+              order&apos;s email address with Google, so your privacy notice needs to say so.
+            </span>
+          </span>
+        </label>
+        {settings.customerReviewsEnabled && !settings.merchantId && (
+          <p style={{ ...hint, marginTop: '0.5rem', color: 'var(--color-danger)' }}>
+            Nothing will appear until your Merchant Center account number is filled in above - Google will not take a survey without one.
+          </p>
+        )}
+        <label style={{ display: 'block', marginTop: '1rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Where it appears</span>
+          <select
+            value={settings.customerReviewsStyle}
+            disabled={saving}
+            onChange={(e) => void save({ customerReviewsStyle: e.target.value as GsfOptInStyle })}
+            style={{ ...inputStyle, maxWidth: 320 }}
+          >
+            {GSF_OPT_IN_STYLES.map((style) => (
+              <option key={style} value={style}>{OPT_IN_STYLE_LABELS[style]}</option>
+            ))}
+          </select>
+          <span style={hint}>Google&apos;s own finding is that a box tucked in a corner gets said yes to far less often than one in the middle.</span>
+        </label>
+        <label style={{ display: 'block', marginTop: '1rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Usual working days to delivery</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="number"
+              min={0}
+              max={365}
+              value={deliveryDaysDraft}
+              onChange={(e) => setDeliveryDaysDraft(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 120 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={saving || deliveryDaysDraft === String(settings.customerReviewsDeliveryDays) || !/^\d+$/.test(deliveryDaysDraft)}
+              onClick={() => void save({ customerReviewsDeliveryDays: Number(deliveryDaysDraft) })}
+            >
+              Save days
+            </button>
+          </div>
+          <span style={hint}>
+            Google has to be told roughly when the parcel lands so it knows when to write. Where a delivery module can say for a
+            particular product, that is used instead and this figure never comes up.
+          </span>
+        </label>
+        <span style={{ ...hint, marginTop: '1rem' }}>
+          The survey rides on a marker on your order confirmation layout. New sites get it put there for them; on a site that already had
+          this module, add the &ldquo;Google Review Survey&rdquo; block to the Order Confirmation layout once and it stays put.
+        </span>
       </section>
 
       <section style={card}>
