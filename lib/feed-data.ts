@@ -21,6 +21,7 @@ import { stripHtmlToPlainText } from '@/modules/shop/lib/strip-html'
 import type { ShpProduct } from '@/modules/shop/lib/types'
 import { getProductIdsWithVariations } from '@/modules/shop-variations/lib/db/variants'
 import { getEditorPayloadsBatch } from '@/modules/shop-variations/lib/variants-service'
+import { variationCanonicalQuery } from '@/modules/shop-variations/lib/url-selection'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
 import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
@@ -283,6 +284,25 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         if (value) pairs.push({ name: option.name, value: value.label })
       }
 
+      // Where the item lands. The address the sitemap publishes and the page
+      // declares canonical for this combination - the parent listing carrying
+      // the option parameters - and NOT the variation's own child-product slug.
+      // Both render the same configured page, but the child slug is one the
+      // page itself disowns: Google follows it out of the feed, reads the
+      // canonical, and files every variation under "alternative page with a
+      // proper canonical tag" instead of indexing it. Same function the sitemap
+      // and the canonical tag spell it with, so the three cannot disagree.
+      //
+      // The child slug still stands in where the combination has no address of
+      // its own (an option left unanswered, two options sharing a parameter
+      // name) - it renders the right page, and a landing page that works beats
+      // a tidy one that does not. `id` is untouched either way, so Merchant
+      // Center sees the same listings it always did, at a new address.
+      const variationQuery = variationCanonicalQuery(payload.options, variant.optionValueIds)
+      const link = variationQuery
+        ? `${productUrl(siteUrl, parent.slug, config.productUrlStyle)}?${variationQuery}`
+        : productUrl(siteUrl, child.slug, config.productUrlStyle)
+
       const priced = { price: variant.price, salePrice: variant.salePrice }
       const onSale = isOnSale(priced, config.enabledPriceTypes)
       const taxClassId = child.tax_class_id ?? parent.tax_class_id
@@ -293,7 +313,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         itemGroupId: parent.id,
         title: variant.label ? `${parent.name} - ${variant.label}` : parent.name,
         description,
-        link: productUrl(siteUrl, child.slug, config.productUrlStyle),
+        link,
         imageLinks: variant.imageUrls.length > 0 ? variant.imageUrls : parentImages,
         availability: availabilityOf({
           trackInventory: variant.trackInventory,

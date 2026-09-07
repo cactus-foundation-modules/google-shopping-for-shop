@@ -1,6 +1,6 @@
 {
   "name": "google-shopping-for-shop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "tablePrefix": "gsf_",
   "description": "Puts your shop on Google Shopping. Serves a product feed for Google Merchant Center in which every variation is its own listing - its own price, photos, stock and link - grouped under its parent product, so a search for the exact size and colour someone wants finds the exact size and colour you sell. Give Google the feed address once and it keeps itself up to date; brand and barcode details can be set per product, and anything you would rather keep off Google can sit the feed out. It also serves a review feed, so the star ratings customers leave here can show on your Google listings, and can offer Google's own survey on the order confirmation page for a seller rating.",
   "requiresCoreVersion": "0.5.1288",
@@ -11,7 +11,7 @@
     },
     {
       "name": "shop-variations",
-      "minVersion": "0.1.146"
+      "minVersion": "0.1.172"
     }
   ],
   "requiredEnvVars": [],
