@@ -42,6 +42,19 @@ export type GsfSettings = {
   // The country those prices apply to, ISO 3166-1 alpha-2. Google requires one
   // on every shipping group and has no default of its own.
   shippingCountry: string
+  // The product attribute whose value each item carries as `shipping_label`,
+  // which is what Merchant Center matches its own delivery rates against. Null
+  // is off, and off is the default: this changes what Google charges for
+  // delivery, so it is the owner's decision rather than something an update
+  // does to them. The id belongs to whichever module publishes attributes; one
+  // that no longer exists finds nothing and leaves the label off.
+  shippingLabelAttributeId: string | null
+  // Send each item's return policy label - the shop's own non-returnable note -
+  // so Merchant Center can judge made-to-order goods by a policy of their own.
+  // Off by default: a label matching no policy over there silently falls back to
+  // the account default, so the policies have to exist before the labels mean
+  // anything, and only the owner knows whether they do.
+  returnPolicyLabelsEnabled: boolean
   // Serve the product REVIEW feed as well as the product feed. Separate switch
   // and separate address: a shop may want its products on Google without
   // republishing what customers wrote about them.
@@ -69,10 +82,16 @@ export type GsfSettingsView = {
   feedLabel: string
   sendDeliveryOptions: boolean
   shippingCountry: string
+  shippingLabelAttributeId: string
+  // Every attribute the shop could group by, for the dropdown. Empty where no
+  // module publishes any, which makes the setting a promise nothing can keep -
+  // so the tab says so rather than offering an empty list.
+  shippingLabelAttributes: Array<{ id: string; name: string }>
   // Whether a module publishing delivery services is actually installed. False
   // makes the switch above a promise nothing can keep, so the tab says so
   // instead of leaving the owner wondering why the feed looks unchanged.
   deliveryOptionsAvailable: boolean
+  returnPolicyLabelsEnabled: boolean
   reviewsFeedEnabled: boolean
   // The review feed's own address, null for the same reasons as feedUrl above.
   reviewsFeedUrl: string | null

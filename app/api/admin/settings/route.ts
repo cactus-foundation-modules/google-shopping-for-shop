@@ -6,10 +6,11 @@ import { getSiteUrlOrNull } from '@/lib/config/env'
 import { getGsfSettings, regenerateGsfFeedToken, updateGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { hasDeliveryTimingProvider } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
+import { listLabelAttributes } from '@/modules/google-shopping-for-shop/lib/product-labels'
 import { hasReviewsProvider } from '@/modules/google-shopping-for-shop/lib/reviews-source'
 
 async function view(): Promise<GsfSettingsView> {
-  const settings = await getGsfSettings()
+  const [settings, labelAttributes] = await Promise.all([getGsfSettings(), listLabelAttributes()])
   const siteUrl = getSiteUrlOrNull()
   const base = siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null
   return {
@@ -22,7 +23,10 @@ async function view(): Promise<GsfSettingsView> {
     feedLabel: settings.feedLabel ?? '',
     sendDeliveryOptions: settings.sendDeliveryOptions,
     shippingCountry: settings.shippingCountry,
+    shippingLabelAttributeId: settings.shippingLabelAttributeId ?? '',
+    shippingLabelAttributes: labelAttributes,
     deliveryOptionsAvailable: hasDeliveryTimingProvider(),
+    returnPolicyLabelsEnabled: settings.returnPolicyLabelsEnabled,
     reviewsFeedEnabled: settings.reviewsFeedEnabled,
     // The same address as the product feed, one parameter apart - see the
     // route's own note on why there is not a second file name.
@@ -52,6 +56,12 @@ const PatchBody = z.object({
   sendDeliveryOptions: z.boolean().optional(),
   // Normalised to two upper-case letters server-side; anything else becomes GB.
   shippingCountry: z.string().max(8).optional(),
+  // An attribute id from whichever module publishes them, or '' for off. Not
+  // checked against the list here on purpose: an id that no longer exists finds
+  // nothing and leaves the label off, which is the same as off, and refusing
+  // the save would only strand an owner whose attribute had been deleted.
+  shippingLabelAttributeId: z.string().max(64).optional(),
+  returnPolicyLabelsEnabled: z.boolean().optional(),
   reviewsFeedEnabled: z.boolean().optional(),
   customerReviewsEnabled: z.boolean().optional(),
   customerReviewsStyle: z.enum(GSF_OPT_IN_STYLES).optional(),
@@ -77,6 +87,8 @@ export async function PATCH(request: NextRequest) {
     feedLabel: body.feedLabel,
     sendDeliveryOptions: body.sendDeliveryOptions,
     shippingCountry: body.shippingCountry,
+    shippingLabelAttributeId: body.shippingLabelAttributeId,
+    returnPolicyLabelsEnabled: body.returnPolicyLabelsEnabled,
     reviewsFeedEnabled: body.reviewsFeedEnabled,
     customerReviewsEnabled: body.customerReviewsEnabled,
     customerReviewsStyle: body.customerReviewsStyle,

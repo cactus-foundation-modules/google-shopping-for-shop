@@ -65,6 +65,15 @@ export type FeedItem = {
   googleProductCategory?: string
   /** e.g. "12.5 kg" - only when the weight and a Google-accepted unit exist. */
   shippingWeight?: string
+  /** The group Merchant Center matches its own delivery rates against - the
+   *  owner's own wording, taken from whichever product attribute they chose.
+   *  Already cut to Google's 100 characters by fitShippingLabel. */
+  shippingLabel?: string
+  /** Names the Merchant Center return policy this item is judged by - the
+   *  shop's own non-returnable wording. Absent means "the account's default
+   *  policy", which is what a returnable item wants. Already cut to Google's
+   *  100 characters by fitShippingLabel. */
+  returnPolicyLabel?: string
   /** Working days from order to dispatch. Google wants a range; a shop quoting
    *  one figure sends it as both ends. Both are set together or neither is -
    *  Google rejects a half-stated range. */
@@ -95,6 +104,7 @@ export type FeedChannel = {
 
 const TITLE_MAX = 150
 const DESCRIPTION_MAX = 5000
+const SHIPPING_LABEL_MAX = 100
 
 function escapeXml(s: string): string {
   return s
@@ -139,6 +149,42 @@ export function mapVariantAxes(pairs: FeedOptionPair[]): FeedVariantAxes {
   }
   if (sizes.length > 0) axes.size = sizes.join(' x ')
   return axes
+}
+
+/** A short, stable stand-in for a label Google will not take whole. Four
+ *  base-36 characters of a plain string hash: it is not a checksum, it only has
+ *  to be the same every run and different for different text, so two labels that
+ *  agree for their first ninety-odd characters do not collapse into one delivery
+ *  group in Merchant Center. */
+function labelFingerprint(value: string): string {
+  let hash = 5381
+  for (let i = 0; i < value.length; i += 1) hash = ((hash * 33) ^ value.charCodeAt(i)) >>> 0
+  return hash.toString(36).padStart(4, '0').slice(-4)
+}
+
+/** One shipping label, cut to the 100 characters Google allows.
+ *
+ *  Anything already short enough is sent untouched, which is the case worth
+ *  optimising for: the label is the owner's own wording and they have to
+ *  recognise it in Merchant Center to write a rate against it.
+ *
+ *  A longer one is cut on a word where one is near and given a short
+ *  fingerprint of the WHOLE original. Without that, two labels differing only
+ *  in their tail - which is exactly how a list of delivery groups tends to read
+ *  - would arrive at Google as the same label and quietly take the same
+ *  delivery rate. A wrong rate on a group nobody noticed merging is worse than
+ *  four ugly characters. */
+export function fitShippingLabel(raw: string | null | undefined): string | undefined {
+  const label = (raw ?? '').trim().replace(/\s+/g, ' ')
+  if (!label) return undefined
+  if (label.length <= SHIPPING_LABEL_MAX) return label
+
+  const suffix = ` ~${labelFingerprint(label)}`
+  const room = SHIPPING_LABEL_MAX - suffix.length
+  const hard = label.slice(0, room)
+  const lastSpace = hard.lastIndexOf(' ')
+  const head = (lastSpace > room - 30 ? hard.slice(0, lastSpace) : hard).trimEnd()
+  return `${head}${suffix}`
 }
 
 function money(amount: number, currency: string): string {
@@ -216,6 +262,8 @@ function renderItem(item: FeedItem): string {
     tag('g:product_type', item.productType),
     tag('g:google_product_category', item.googleProductCategory),
     tag('g:shipping_weight', item.shippingWeight),
+    tag('g:shipping_label', item.shippingLabel),
+    tag('g:return_policy_label', item.returnPolicyLabel),
     ...handlingAndTransit(item),
     ...shippingGroups(item, item.currency),
     // Only meaningful on the two availabilities where the shop has not got the

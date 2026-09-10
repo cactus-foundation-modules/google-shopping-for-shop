@@ -85,7 +85,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -280,6 +280,58 @@ export function GoogleShoppingSettingsTab() {
             </button>
           </div>
           <span style={hint}>Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
+        </label>
+
+        <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.25rem' }}>Group your products for delivery rates</h4>
+        <span style={hint}>
+          The other way round: instead of sending your charges, tell Google which delivery group each product belongs to and set the
+          rate for each group over in Merchant Center. Useful where what you charge depends on what the thing is - a chair, a desk,
+          something made to order - rather than on the product itself.
+        </span>
+        {settings.shippingLabelAttributes.length === 0 && (
+          <p style={{ ...hint, marginTop: '0.5rem' }}>
+            Nothing on this site keeps product attributes at the moment, so there is nothing to group by. Install a product attributes
+            module and this fills itself in.
+          </p>
+        )}
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Group by</span>
+          <select
+            value={settings.shippingLabelAttributeId}
+            disabled={saving || settings.shippingLabelAttributes.length === 0}
+            onChange={(e) => void save({ shippingLabelAttributeId: e.target.value })}
+            style={{ ...inputStyle, maxWidth: 340 }}
+          >
+            <option value="">Do not group them</option>
+            {settings.shippingLabelAttributes.map((attribute) => (
+              <option key={attribute.id} value={attribute.id}>
+                {attribute.name}
+              </option>
+            ))}
+          </select>
+          <span style={hint}>
+            Each product goes to Google labelled with its own value for whatever you pick here, and a variation uses its own where it
+            has one. Google allows 100 characters, so anything longer arrives shortened - keep the wording brief and you will recognise
+            it in Merchant Center.
+          </span>
+        </label>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1.25rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.returnPolicyLabelsEnabled}
+            disabled={saving}
+            onChange={(e) => void save({ returnPolicyLabelsEnabled: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Tell Google which things cannot be sent back</span>
+            <span style={hint}>
+              Anything you have marked as not returnable goes to Google labelled with the very sentence you wrote to explain why, and
+              every variation of it follows suit. Set up a return policy in Merchant Center named exactly that sentence and Google will
+              apply it. Leave this off until those policies exist - a label Merchant Center does not recognise is quietly ignored, and
+              the item is treated as returnable after all.
+            </span>
+          </span>
         </label>
       </section>
 

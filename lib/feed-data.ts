@@ -25,7 +25,9 @@ import { variationCanonicalQuery } from '@/modules/shop-variations/lib/url-selec
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
 import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
-import { mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product-labels'
+import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
+import { fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
 
 // The parent-product columns the feed needs, fetched raw because listProducts
@@ -42,6 +44,8 @@ type ParentRow = {
   master_category_id: string | null
   tax_class_id: string | null
   supplier: string | null
+  returnable: boolean | null
+  non_returnable_note: string | null
 }
 
 // The per-child columns VariantEditorRow does not carry (availability inputs
@@ -57,6 +61,8 @@ type ChildRow = {
   tax_class_id: string | null
   weight_unit: string | null
   supplier: string | null
+  returnable: boolean | null
+  non_returnable_note: string | null
 }
 
 // Units Google's shipping_weight accepts; anything else drops the attribute.
@@ -165,7 +171,8 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     const stockFilter = hideOutOfStock ? Prisma.sql`AND NOT ${await outOfStockSql()}` : Prisma.empty
     parents = await prisma.$queryRaw<ParentRow[]>`
       SELECT p."id", p."name", p."slug", p."price", p."sale_price", p."description", p."short_description",
-             p."meta_description", p."master_category_id", p."tax_class_id", p."supplier"
+             p."meta_description", p."master_category_id", p."tax_class_id", p."supplier",
+             p."returnable", p."non_returnable_note"
       FROM "shp_products" p
       WHERE p."id" IN (${Prisma.join(variationParentIds)})
         AND p."status" = 'ACTIVE' AND p."catalogue_hidden" = false AND p."type" = 'PHYSICAL'
@@ -181,7 +188,8 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
   if (childIds.length > 0) {
     const rows = await prisma.$queryRaw<ChildRow[]>`
       SELECT "id", "slug", "status", "track_inventory", "stock_count", "out_of_stock_behaviour",
-             "is_pre_order", "tax_class_id", "weight_unit", "supplier"
+             "is_pre_order", "tax_class_id", "weight_unit", "supplier",
+             "returnable", "non_returnable_note"
       FROM "shp_products" WHERE "id" IN (${Prisma.join(childIds)})
     `
     for (const row of rows) childById.set(row.id, row)
@@ -256,6 +264,10 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
       .map((m) => m.url)
 
+  // Read once for the whole run: off is the common case, and asking per item
+  // would be asking the same question twenty thousand times.
+  const returnLabels = settings.returnPolicyLabelsEnabled
+
   const items: FeedItem[] = []
   // The tax class each finished item was priced under, so the delivery pass at
   // the bottom can gross up a service charge exactly as the item's own price was
@@ -329,6 +341,15 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         productType,
         ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
         shippingWeight: shippingWeightOf(variant.weight, child.weight_unit),
+        // The variation's own answer where it has one, its listing's where it
+        // has not - resolved here rather than in a pass at the bottom because
+        // both rows are already in hand and neither costs a query.
+        ...(returnLabels
+          ? { returnPolicyLabel: returnPolicyLabelFor(
+              { returnable: child.returnable, nonReturnableNote: child.non_returnable_note },
+              { returnable: parent.returnable, nonReturnableNote: parent.non_returnable_note },
+            ) }
+          : {}),
         axes: mapVariantAxes(pairs),
       })
     }
@@ -359,7 +380,41 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
       productType: productTypeOf(product.id, product.masterCategoryId),
       ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
       shippingWeight: shippingWeightOf(product.weight, product.weightUnit),
+      // No listing above it to inherit from, so it answers as both halves.
+      ...(returnLabels
+        ? { returnPolicyLabel: returnPolicyLabelFor(
+            { returnable: product.returnable, nonReturnableNote: product.nonReturnableNote },
+            undefined,
+          ) }
+        : {}),
     })
+  }
+
+  // ----- Delivery groups -----------------------------------------------------
+  // The label Merchant Center matches its own delivery rates against, taken
+  // from whichever product attribute the owner picked. One pass over the
+  // finished items and one call for the whole run, for the same reason the
+  // delivery times below take one: a call per item would undo the batching that
+  // makes a catalogue-sized feed affordable at all.
+  //
+  // A variation answers for itself where it has an answer, and inherits its
+  // parent's where it has not - which is how the shop reads everywhere else,
+  // and how an owner who set the attribute once on the parent expects it to
+  // behave. Off unless the owner chose an attribute, and silent when nothing
+  // publishes attributes at all.
+  if (settings.shippingLabelAttributeId) {
+    const wanted = new Set<string>()
+    for (const item of items) {
+      wanted.add(item.id)
+      if (item.itemGroupId) wanted.add(item.itemGroupId)
+    }
+    const labels = await getProductLabels(settings.shippingLabelAttributeId, [...wanted])
+    for (const item of items) {
+      const own = labels.get(item.id)
+      const inherited = item.itemGroupId ? labels.get(item.itemGroupId) : undefined
+      const fitted = fitShippingLabel(own ?? inherited)
+      if (fitted) item.shippingLabel = fitted
+    }
   }
 
   // ----- Delivery times ------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildFeedXml, mapVariantAxes, normaliseGtin, type FeedItem } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { buildFeedXml, fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedItem } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 
 const baseItem: FeedItem = {
   id: 'child-1',
@@ -194,5 +194,54 @@ describe('normaliseGtin', () => {
     expect(normaliseGtin('12345')).toBeNull()
     expect(normaliseGtin('')).toBeNull()
     expect(normaliseGtin(null)).toBeNull()
+  })
+})
+
+describe('fitShippingLabel', () => {
+  it('leaves a label Google will take exactly as the owner wrote it', () => {
+    expect(fitShippingLabel('Seating - 3-5Dy - AsmbldNo')).toBe('Seating - 3-5Dy - AsmbldNo')
+  })
+
+  it('treats nothing, and nothing but spaces, as no label at all', () => {
+    expect(fitShippingLabel(null)).toBeUndefined()
+    expect(fitShippingLabel(undefined)).toBeUndefined()
+    expect(fitShippingLabel('   ')).toBeUndefined()
+  })
+
+  it('collapses the whitespace a spreadsheet cell tends to arrive with', () => {
+    expect(fitShippingLabel('  Seating  -   3-5Dy ')).toBe('Seating - 3-5Dy')
+  })
+
+  it('never sends Google more than the 100 characters it allows', () => {
+    const long = `Furniture - Standard Delivery Days 3-5 - Assembled No - ${'Next Day Cost £8.95 - '.repeat(6)}end`
+    const fitted = fitShippingLabel(long)!
+    expect(fitted.length).toBeLessThanOrEqual(100)
+  })
+
+  it('keeps two labels apart when they only differ past the cut', () => {
+    const head = 'Furniture - Standard Delivery Days 3-5 - Assembled No - Next Day Cost £8.95 - 7-10 Day Install Cost '
+    const a = fitShippingLabel(`${head}£25.95`)
+    const b = fitShippingLabel(`${head}£49.95`)
+    expect(a).not.toBe(b)
+  })
+
+  it('gives the same answer every run, so an item does not change group between feeds', () => {
+    const label = `Soft Seating - Standard Delivery Days 15-20 - Assembled Yes - ${'7-10 Day Install Cost £103.80 - '.repeat(3)}Made To Order`
+    expect(fitShippingLabel(label)).toBe(fitShippingLabel(label))
+  })
+})
+
+describe('return policy label', () => {
+  const channel = { title: 'Feed', link: 'https://example.test', description: 'd' }
+
+  it('renders the label when the item carries one', () => {
+    const xml = buildFeedXml(channel, [
+      { ...baseItem, returnPolicyLabel: 'Made to order in the options you choose, so we cannot take it back.' },
+    ])
+    expect(xml).toContain('<g:return_policy_label>Made to order in the options you choose, so we cannot take it back.</g:return_policy_label>')
+  })
+
+  it('leaves the attribute off an item without one', () => {
+    expect(buildFeedXml(channel, [baseItem])).not.toContain('<g:return_policy_label>')
   })
 })

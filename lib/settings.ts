@@ -32,10 +32,12 @@ type SettingsRow = {
   feed_label: string | null
   send_delivery_options: boolean
   shipping_country: string | null
+  shipping_label_attribute_id: string | null
   reviews_feed_enabled: boolean
   customer_reviews_enabled: boolean
   customer_reviews_style: string | null
   customer_reviews_delivery_days: number
+  return_policy_labels_enabled: boolean
 }
 
 // A country Google will take on a shipping group: two letters, upper case.
@@ -58,8 +60,9 @@ export async function getGsfSettings(): Promise<GsfSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
     SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition",
            "merchant_id", "feed_label", "send_delivery_options", "shipping_country",
+           "shipping_label_attribute_id",
            "reviews_feed_enabled", "customer_reviews_enabled", "customer_reviews_style",
-           "customer_reviews_delivery_days"
+           "customer_reviews_delivery_days", "return_policy_labels_enabled"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
@@ -68,8 +71,10 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     return {
       enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true,
       defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false,
-      shippingCountry: 'GB', reviewsFeedEnabled: false, customerReviewsEnabled: false,
+      shippingCountry: 'GB', shippingLabelAttributeId: null,
+      reviewsFeedEnabled: false, customerReviewsEnabled: false,
       customerReviewsStyle: 'CENTER_DIALOG', customerReviewsDeliveryDays: 5,
+      returnPolicyLabelsEnabled: false,
     }
   }
   let feedToken = row.feed_token
@@ -95,10 +100,12 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     feedLabel: row.feed_label,
     sendDeliveryOptions: row.send_delivery_options,
     shippingCountry: asShippingCountry(row.shipping_country),
+    shippingLabelAttributeId: row.shipping_label_attribute_id?.trim() || null,
     reviewsFeedEnabled: row.reviews_feed_enabled,
     customerReviewsEnabled: row.customer_reviews_enabled,
     customerReviewsStyle: asOptInStyle(row.customer_reviews_style),
     customerReviewsDeliveryDays: asDeliveryDays(Number(row.customer_reviews_delivery_days)),
+    returnPolicyLabelsEnabled: row.return_policy_labels_enabled,
   }
 }
 
@@ -111,10 +118,12 @@ export async function updateGsfSettings(patch: {
   feedLabel?: string | null
   sendDeliveryOptions?: boolean
   shippingCountry?: string
+  shippingLabelAttributeId?: string | null
   reviewsFeedEnabled?: boolean
   customerReviewsEnabled?: boolean
   customerReviewsStyle?: GsfOptInStyle
   customerReviewsDeliveryDays?: number
+  returnPolicyLabelsEnabled?: boolean
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -147,6 +156,12 @@ export async function updateGsfSettings(patch: {
     const value = asShippingCountry(patch.shippingCountry)
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "shipping_country" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
+  if (patch.shippingLabelAttributeId !== undefined) {
+    // An empty choice is "off", stored as NULL rather than an empty string so
+    // there is one answer to "is this set" and not two.
+    const value = patch.shippingLabelAttributeId?.trim() || null
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "shipping_label_attribute_id" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
   if (patch.reviewsFeedEnabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "reviews_feed_enabled" = ${patch.reviewsFeedEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
@@ -160,6 +175,9 @@ export async function updateGsfSettings(patch: {
   if (patch.customerReviewsDeliveryDays !== undefined) {
     const value = asDeliveryDays(patch.customerReviewsDeliveryDays)
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "customer_reviews_delivery_days" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.returnPolicyLabelsEnabled !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "return_policy_labels_enabled" = ${patch.returnPolicyLabelsEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 
