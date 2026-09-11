@@ -30,7 +30,8 @@ import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delive
 import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product-labels'
 import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
-import { fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
@@ -113,34 +114,6 @@ function descriptionOf(parent: { meta_description?: string | null; short_descrip
   const text = stripHtmlToPlainText(raw).trim()
   return text || fallback
 }
-
-// Identifier fields for one item. GTINs come from the barcode column (per
-// variant) or the per-product override; MPN only ever from the per-product row,
-// and only on standalone items - one parent-level MPN across every variation
-// would claim they are all the same part. SKUs are deliberately never used:
-// the shop withholds its buying codes from shoppers, so the feed must not
-// publish them either.
-//
-// Brand runs per-product override, then the supplier the shop files the product
-// under (when the setting allows), then the shop-wide default. The supplier is
-// the nearest thing the shop already knows to a maker's name, so a catalogue
-// filed by supplier needs no per-product brand typed in at all. On a variation
-// it is the CHILD row's supplier first: an import fills the supplier in on the
-// rows it creates, which are the children, and a parent assembled by hand in the
-// admin often has the column left blank. The parent only stands in behind it.
-function identifiersOf(
-  data: Pick<GsfProductData, 'brand' | 'gtin' | 'mpn'>,
-  brandFallbacks: { supplier: string | null; defaultBrand: string | null; useSupplier: boolean },
-  barcode: string | null,
-  opts: { standalone: boolean },
-): { brand?: string; gtin?: string; mpn?: string; identifierExists: boolean } {
-  const supplier = brandFallbacks.useSupplier ? brandFallbacks.supplier : null
-  const brand = data.brand ?? supplier ?? brandFallbacks.defaultBrand ?? undefined
-  const gtin = normaliseGtin(barcode) ?? (opts.standalone ? normaliseGtin(data.gtin) : null) ?? undefined
-  const mpn = opts.standalone ? data.mpn ?? undefined : undefined
-  return { brand, gtin, mpn, identifierExists: Boolean(gtin || (brand && mpn)) }
-}
-
 /** The two documents one pass over the catalogue produces. They are fetched by
  *  Google separately, minutes or hours apart, and are joined only by the
  *  promotion ids both spell - which is precisely why they are derived together
