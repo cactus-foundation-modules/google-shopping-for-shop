@@ -65,6 +65,14 @@ export type GsfSettings = {
   // and separate address: a shop may want its products on Google without
   // republishing what customers wrote about them.
   reviewsFeedEnabled: boolean
+  // Serve the PROMOTIONS data source, built from the shop's order-size
+  // deduction. Off by default: it advertises a discount, and the advertisement
+  // is slightly wider than the rule behind it (see lib/promotions-data.ts).
+  promotionsFeedEnabled: boolean
+  // Extra terms appended to every promotion. The condition sentence is worked
+  // out from the shop's own figures and always leads; this is whatever else the
+  // owner needs to say. Null is nothing to add.
+  promotionsFinePrint: string | null
   // Show Google's own survey opt-in on the order confirmation page (Google
   // Customer Reviews). Off by default - it hands the customer's email to Google
   // so they can be surveyed after delivery, which is the owner's call.
@@ -102,6 +110,15 @@ export type GsfSettingsView = {
   reviewsFeedEnabled: boolean
   // The review feed's own address, null for the same reasons as feedUrl above.
   reviewsFeedUrl: string | null
+  promotionsFeedEnabled: boolean
+  promotionsFinePrint: string
+  // The promotions source's own address, null for the same reasons as feedUrl.
+  promotionsFeedUrl: string | null
+  // Whether the shop is actually running the order-size deduction. False makes
+  // the switch a promise nothing can keep - the source would be empty - so the
+  // tab says so rather than leaving the owner wondering where the promotions
+  // went.
+  promotionsAvailable: boolean
   // Whether any installed module publishes customer reviews at all. False makes
   // the review feed a document with nothing in it, so the tab says so.
   reviewsAvailable: boolean

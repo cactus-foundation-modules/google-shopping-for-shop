@@ -93,6 +93,12 @@ export type FeedItem = {
    *  free option in the list is what a listing shows. Empty or absent leaves
    *  the Merchant Center account's own rates in charge, which is the default. */
   shippingGroups?: FeedShippingGroup[]
+  /** The promotions this item takes part in, by the id the promotions source
+   *  gives them. Mapping the offer here rather than listing item ids over there
+   *  is what Google asks for past twenty items, and a catalogue is past twenty
+   *  items. Google shows one promotion per listing, so an item is normally in
+   *  exactly one; ten is their ceiling. */
+  promotionIds?: string[]
   axes?: FeedVariantAxes
 }
 
@@ -264,6 +270,8 @@ function renderItem(item: FeedItem): string {
     tag('g:shipping_weight', item.shippingWeight),
     tag('g:shipping_label', item.shippingLabel),
     tag('g:return_policy_label', item.returnPolicyLabel),
+    // Google takes at most ten, and quietly ignores the source past that.
+    ...(item.promotionIds ?? []).slice(0, 10).map((id) => tag('g:promotion_id', id)),
     ...handlingAndTransit(item),
     ...shippingGroups(item, item.currency),
     // Only meaningful on the two availabilities where the shop has not got the

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireShopUser } from '@/modules/shop/lib/access'
+import { getShopConfigCached } from '@/modules/shop/lib/config'
 import { getSiteUrlOrNull } from '@/lib/config/env'
 import { getGsfSettings, regenerateGsfFeedToken, updateGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
@@ -10,7 +11,11 @@ import { listLabelAttributes } from '@/modules/google-shopping-for-shop/lib/prod
 import { hasReviewsProvider } from '@/modules/google-shopping-for-shop/lib/reviews-source'
 
 async function view(): Promise<GsfSettingsView> {
-  const [settings, labelAttributes] = await Promise.all([getGsfSettings(), listLabelAttributes()])
+  const [settings, labelAttributes, shopConfig] = await Promise.all([
+    getGsfSettings(),
+    listLabelAttributes(),
+    getShopConfigCached(),
+  ])
   const siteUrl = getSiteUrlOrNull()
   const base = siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null
   return {
@@ -33,6 +38,12 @@ async function view(): Promise<GsfSettingsView> {
     // route's own note on why there is not a second file name.
     reviewsFeedUrl: base ? `${base}&content=reviews` : null,
     reviewsAvailable: hasReviewsProvider(),
+    promotionsFeedEnabled: settings.promotionsFeedEnabled,
+    promotionsFinePrint: settings.promotionsFinePrint ?? '',
+    promotionsFeedUrl: base ? `${base}&content=promotions` : null,
+    // There is only one thing to advertise, and it is shop's own order-size
+    // deduction. Switched off there, the source would be an empty document.
+    promotionsAvailable: shopConfig.orderSizeDeductionEnabled,
     customerReviewsEnabled: settings.customerReviewsEnabled,
     customerReviewsStyle: settings.customerReviewsStyle,
     customerReviewsDeliveryDays: settings.customerReviewsDeliveryDays,
@@ -65,6 +76,10 @@ const PatchBody = z.object({
   returnPolicyLabelsEnabled: z.boolean().optional(),
   parentImagesOnVariations: z.boolean().optional(),
   reviewsFeedEnabled: z.boolean().optional(),
+  promotionsFeedEnabled: z.boolean().optional(),
+  // Cut to Google's 500 characters server-side; this only stops a paste of half
+  // a contract reaching the column.
+  promotionsFinePrint: z.string().max(2000).optional(),
   customerReviewsEnabled: z.boolean().optional(),
   customerReviewsStyle: z.enum(GSF_OPT_IN_STYLES).optional(),
   // Clamped to something sane server-side; this only stops a paste of War and
@@ -93,6 +108,8 @@ export async function PATCH(request: NextRequest) {
     returnPolicyLabelsEnabled: body.returnPolicyLabelsEnabled,
     parentImagesOnVariations: body.parentImagesOnVariations,
     reviewsFeedEnabled: body.reviewsFeedEnabled,
+    promotionsFeedEnabled: body.promotionsFeedEnabled,
+    promotionsFinePrint: body.promotionsFinePrint,
     customerReviewsEnabled: body.customerReviewsEnabled,
     customerReviewsStyle: body.customerReviewsStyle,
     customerReviewsDeliveryDays: body.customerReviewsDeliveryDays,

@@ -55,7 +55,8 @@ export function GoogleShoppingSettingsTab() {
   const [deliveryDaysDraft, setDeliveryDaysDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [copied, setCopied] = useState<'products' | 'reviews' | null>(null)
+  const [copied, setCopied] = useState<'products' | 'reviews' | 'promotions' | null>(null)
+  const [finePrintDraft, setFinePrintDraft] = useState('')
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -69,6 +70,7 @@ export function GoogleShoppingSettingsTab() {
       setFeedLabelDraft(body.settings.feedLabel)
       setCountryDraft(body.settings.shippingCountry)
       setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
+      setFinePrintDraft(body.settings.promotionsFinePrint)
     } catch {
       setError('Could not load Google Shopping settings.')
     }
@@ -85,7 +87,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; promotionsFeedEnabled?: boolean; promotionsFinePrint?: string; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -103,6 +105,7 @@ export function GoogleShoppingSettingsTab() {
       setFeedLabelDraft(body.settings.feedLabel)
       setCountryDraft(body.settings.shippingCountry)
       setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
+      setFinePrintDraft(body.settings.promotionsFinePrint)
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -111,7 +114,7 @@ export function GoogleShoppingSettingsTab() {
     }
   }
 
-  async function copyFeedUrl(url: string, which: 'products' | 'reviews') {
+  async function copyFeedUrl(url: string, which: 'products' | 'reviews' | 'promotions') {
     try {
       await navigator.clipboard.writeText(url)
       setCopied(which)
@@ -356,6 +359,72 @@ export function GoogleShoppingSettingsTab() {
             </span>
           </span>
         </label>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Discounts on your listings</h3>
+        <span style={hint}>
+          If you take money off once a basket holds enough of one supplier&apos;s goods, Google can print that on the listings
+          themselves rather than leaving shoppers to find it in the basket.
+        </span>
+        {!settings.promotionsAvailable && (
+          <p style={{ ...hint, marginTop: '0.5rem' }}>
+            You are not running that discount at the moment - it lives under Pricing, in the shop&apos;s own settings - so there would be
+            nothing to advertise. Switch it on there and this fills itself in.
+          </p>
+        )}
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.promotionsFeedEnabled}
+            disabled={saving || !settings.promotionsAvailable}
+            onChange={(e) => void save({ promotionsFeedEnabled: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Advertise the discount on Google</span>
+            <span style={hint}>
+              One offer per supplier and amount, worked out from your own figures, with each product told which one it belongs to. Only
+              products currently on offer take part, because only they carry the money.
+            </span>
+          </span>
+        </label>
+        <p style={{ ...hint, marginTop: '0.75rem' }}>
+          <strong>Read this before you switch it on.</strong> Google can only say &quot;spend this much&quot; about a whole basket. Your
+          rule counts one supplier&apos;s goods, and leaves delivery out. So a basket that reaches the figure across two suppliers meets
+          Google&apos;s condition and not yours. The terms sent with every offer spell that out, which is what the box below is for.
+        </p>
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', color: 'var(--color-text)', marginBottom: '0.25rem' }}>Anything else to add to the terms</span>
+          <textarea
+            value={finePrintDraft}
+            disabled={saving}
+            rows={3}
+            maxLength={400}
+            onChange={(e) => setFinePrintDraft(e.target.value)}
+            onBlur={() => { if (finePrintDraft !== settings.promotionsFinePrint) void save({ promotionsFinePrint: finePrintDraft }) }}
+            style={{ ...inputStyle, maxWidth: 560, resize: 'vertical' }}
+          />
+          <span style={hint}>
+            Optional. The conditions themselves are written for you and always come first; this goes after them. Google allows 500
+            characters in total.
+          </span>
+        </label>
+        {settings.promotionsFeedUrl ? (
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+            <input type="text" readOnly value={settings.promotionsFeedUrl} onFocus={(e) => e.target.select()} style={{ ...inputStyle, maxWidth: 560 }} />
+            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.promotionsFeedUrl!, 'promotions')}>
+              {copied === 'promotions' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ) : (
+          <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
+        )}
+        <span style={hint}>
+          Goes in Merchant Center as a third data source, the promotions one - alongside the product feed, not in place of it. Google
+          asks to be let into promotions before it will read it, which is a form on their side rather than a switch on ours, and they
+          review each offer before it shows.
+        </span>
       </section>
 
       <section style={card}>

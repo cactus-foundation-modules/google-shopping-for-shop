@@ -39,6 +39,8 @@ type SettingsRow = {
   customer_reviews_delivery_days: number
   return_policy_labels_enabled: boolean
   parent_images_on_variations: boolean
+  promotions_feed_enabled: boolean
+  promotions_fine_print: string | null
 }
 
 // A country Google will take on a shipping group: two letters, upper case.
@@ -64,7 +66,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
            "shipping_label_attribute_id",
            "reviews_feed_enabled", "customer_reviews_enabled", "customer_reviews_style",
            "customer_reviews_delivery_days", "return_policy_labels_enabled",
-           "parent_images_on_variations"
+           "parent_images_on_variations", "promotions_feed_enabled", "promotions_fine_print"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
@@ -77,6 +79,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
       reviewsFeedEnabled: false, customerReviewsEnabled: false,
       customerReviewsStyle: 'CENTER_DIALOG', customerReviewsDeliveryDays: 5,
       returnPolicyLabelsEnabled: false, parentImagesOnVariations: false,
+      promotionsFeedEnabled: false, promotionsFinePrint: null,
     }
   }
   let feedToken = row.feed_token
@@ -109,6 +112,8 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     customerReviewsDeliveryDays: asDeliveryDays(Number(row.customer_reviews_delivery_days)),
     returnPolicyLabelsEnabled: row.return_policy_labels_enabled,
     parentImagesOnVariations: row.parent_images_on_variations,
+    promotionsFeedEnabled: row.promotions_feed_enabled,
+    promotionsFinePrint: row.promotions_fine_print?.trim() || null,
   }
 }
 
@@ -128,6 +133,8 @@ export async function updateGsfSettings(patch: {
   customerReviewsDeliveryDays?: number
   returnPolicyLabelsEnabled?: boolean
   parentImagesOnVariations?: boolean
+  promotionsFeedEnabled?: boolean
+  promotionsFinePrint?: string | null
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -185,6 +192,15 @@ export async function updateGsfSettings(patch: {
   }
   if (patch.parentImagesOnVariations !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "parent_images_on_variations" = ${patch.parentImagesOnVariations}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.promotionsFeedEnabled !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "promotions_feed_enabled" = ${patch.promotionsFeedEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.promotionsFinePrint !== undefined) {
+    // Google takes 500 characters of terms; cut here rather than at the feed so
+    // the owner sees what was kept the moment they save it.
+    const value = patch.promotionsFinePrint?.trim().slice(0, 500) || null
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "promotions_fine_print" = ${value}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 

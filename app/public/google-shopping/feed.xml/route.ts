@@ -1,5 +1,6 @@
 // GET /google-shopping/feed.xml?key=<token> - the Google Merchant Center feed,
-// and with &content=reviews the product REVIEW feed off the same address.
+// with &content=reviews the product REVIEW feed off the same address, and with
+// &content=promotions the PROMOTIONS source off it as well.
 //
 // One address for two documents because core dispatches the literal segment
 // feed.xml and nothing else (app/(public)/[slug]/feed.xml/route.ts); a second
@@ -20,6 +21,7 @@ import { collectFeedItems } from '@/modules/google-shopping-for-shop/lib/feed-da
 import { buildFeedXml } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { collectReviewFeedItems, reviewFeedPublisher } from '@/modules/google-shopping-for-shop/lib/review-feed-data'
 import { buildReviewFeedXml } from '@/modules/google-shopping-for-shop/lib/review-feed-xml'
+import { buildPromotionsXml } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 
 const notFound = () => new Response('Not found', { status: 404 })
 
@@ -35,7 +37,15 @@ export async function GET(request: NextRequest) {
   // The key is the same one, because it is the same module and the same
   // address, one parameter apart.
   const wantsReviews = params.get('content') === 'reviews'
-  const switchedOn = wantsReviews ? settings.reviewsFeedEnabled : settings.enabled
+  // The promotions source has its own switch for the same reason: a shop can
+  // want its products on Google without advertising a discount on them, and the
+  // other way round makes no sense but costs nothing to allow.
+  const wantsPromotions = params.get('content') === 'promotions'
+  const switchedOn = wantsReviews
+    ? settings.reviewsFeedEnabled
+    : wantsPromotions
+      ? settings.promotionsFeedEnabled
+      : settings.enabled
   if (!switchedOn || !settings.feedToken || key !== settings.feedToken) return notFound()
 
   const config = await getShopConfigCached()
@@ -59,7 +69,17 @@ export async function GET(request: NextRequest) {
   const commerce = await resolveShopCommerceMode()
   if (commerce.hidePrices) return notFound()
 
-  const items = await collectFeedItems(siteUrl)
+  // One pass either way: the promotions and the ids the items carry to join them
+  // are worked out together, so the two documents cannot drift apart.
+  const { items, promotions } = await collectFeedItems(siteUrl)
+
+  if (wantsPromotions) {
+    return xml(buildPromotionsXml(
+      { title: 'Promotions', link: siteUrl, description: 'Google Shopping promotions' },
+      promotions,
+    ))
+  }
+
   return xml(buildFeedXml(
     { title: 'Product feed', link: siteUrl, description: 'Google Shopping product feed' },
     items,

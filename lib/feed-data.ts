@@ -17,6 +17,8 @@ import { getDefaultTaxZoneId, listTaxZoneRates } from '@/modules/shop/lib/db/tax
 import { displayAmount, type PriceDisplay } from '@/modules/shop/lib/tax-display-shared'
 import { isOnSale } from '@/modules/shop/lib/pricing'
 import { hidesOutOfStockFromShoppers, outOfStockSql } from '@/modules/shop/lib/stock-visibility'
+import { deductionAmount } from '@/modules/shop/lib/order-size-deduction'
+import { getDeductionRules } from '@/modules/shop/lib/db/suppliers'
 import { stripHtmlToPlainText } from '@/modules/shop/lib/strip-html'
 import type { ShpProduct } from '@/modules/shop/lib/types'
 import { getProductIdsWithVariations } from '@/modules/shop-variations/lib/db/variants'
@@ -29,6 +31,8 @@ import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product
 import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
 import { fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
+import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
 
 // The parent-product columns the feed needs, fetched raw because listProducts
@@ -64,6 +68,7 @@ type ChildRow = {
   supplier: string | null
   returnable: boolean | null
   non_returnable_note: string | null
+  order_size_deduction: unknown
 }
 
 // Units Google's shipping_weight accepts; anything else drops the attribute.
@@ -136,7 +141,13 @@ function identifiersOf(
   return { brand, gtin, mpn, identifierExists: Boolean(gtin || (brand && mpn)) }
 }
 
-export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
+/** The two documents one pass over the catalogue produces. They are fetched by
+ *  Google separately, minutes or hours apart, and are joined only by the
+ *  promotion ids both spell - which is precisely why they are derived together
+ *  here rather than by two scans that could disagree. */
+export type FeedData = { items: FeedItem[]; promotions: FeedPromotion[] }
+
+export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const [config, settings] = await Promise.all([getShopConfigCached(), getGsfSettings()])
   const currency = config.currency
   const hideOutOfStock = hidesOutOfStockFromShoppers(config)
@@ -190,7 +201,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     const rows = await prisma.$queryRaw<ChildRow[]>`
       SELECT "id", "slug", "status", "track_inventory", "stock_count", "out_of_stock_behaviour",
              "is_pre_order", "tax_class_id", "weight_unit", "supplier",
-             "returnable", "non_returnable_note"
+             "returnable", "non_returnable_note", "order_size_deduction"
       FROM "shp_products" WHERE "id" IN (${Prisma.join(childIds)})
     `
     for (const row of rows) childById.set(row.id, row)
@@ -274,6 +285,44 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
   // the bottom can gross up a service charge exactly as the item's own price was
   // grossed - the charge is folded into the line and taxed at the product's rate.
   const taxClassByItem = new Map<string, string | null>()
+
+  // Items that would lose money if their supplier's order-size threshold were
+  // met, gathered as the two loops go rather than in a second pass, because both
+  // already have the supplier, the stamped amount and the sale price in hand.
+  //
+  // The qualifying test is shop's own, spelt exactly as lib/checkout.ts spells
+  // it, because a promotion advertised on an item the basket will not discount
+  // is the one failure mode worth designing against:
+  //   - the supplier on the ROW ITSELF, with no fall back to the listing above
+  //     it (checkout reads line.product.supplier, and for a variation the
+  //     product IS the child);
+  //   - a stamped amount that survives deductionAmount (null, zero and
+  //     negatives are all "no amount");
+  //   - the item actually on offer, which is where the money comes from;
+  //   - and the amount strictly under what the item is charged, since the rule
+  //     floors a line at zero rather than going negative. Such a row would
+  //     advertise more than ever comes off, and shop's own report already flags
+  //     it as a mis-stamp.
+  // Empty on every shop not running the feature, and it costs nothing to be.
+  type OsdCandidate = { itemId: string; supplier: string; storedDeduction: number; taxClassId: string | null }
+  const osdCandidates: OsdCandidate[] = []
+  const promotionsWanted = config.orderSizeDeductionEnabled && settings.promotionsFeedEnabled
+  const considerForPromotion = (
+    itemId: string,
+    supplier: string | null | undefined,
+    stored: number | string | null | undefined,
+    chargedUnitPrice: number | null,
+    onSale: boolean,
+    taxClassId: string | null,
+  ): void => {
+    if (!promotionsWanted || !onSale) return
+    const name = supplier?.trim()
+    if (!name) return
+    const amount = deductionAmount(stored)
+    if (amount == null) return
+    if (chargedUnitPrice == null || !(amount < chargedUnitPrice)) return
+    osdCandidates.push({ itemId, supplier: name, storedDeduction: amount, taxClassId })
+  }
 
   // ----- One item per enabled variant ---------------------------------------
   for (const parent of parents) {
@@ -362,6 +411,16 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
           : {}),
         axes: mapVariantAxes(pairs),
       })
+
+      considerForPromotion(
+        variant.childProductId,
+        // The child's own supplier and nothing behind it - see the note above.
+        child.supplier,
+        child.order_size_deduction as number | string | null,
+        onSale && variant.salePrice != null ? Number(variant.salePrice) : null,
+        onSale,
+        taxClassId,
+      )
     }
   }
 
@@ -398,6 +457,15 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
           ) }
         : {}),
     })
+
+    considerForPromotion(
+      product.id,
+      product.supplier,
+      product.orderSizeDeduction,
+      onSale && product.salePrice != null ? Number(product.salePrice) : null,
+      onSale,
+      product.taxClassId,
+    )
   }
 
   // ----- Delivery groups -----------------------------------------------------
@@ -463,5 +531,63 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     }))
   }
 
-  return items
+  // ----- Promotions ----------------------------------------------------------
+  // One promotion per (supplier, stamped amount), and the id of the one it
+  // belongs to written onto each item. The supplier read is the last query of
+  // the run and only happens where something actually qualifies, so a shop not
+  // running the deduction - or running it with the promotions source switched
+  // off - pays nothing for any of this.
+  //
+  // Google's minimum spend is a WHOLE-BASKET figure and the shop's is one
+  // supplier's goods, delivery excluded. Nothing in the specification can
+  // express the narrower condition, so it goes in the terms instead
+  // (lib/promotions.ts) and the owner switches the whole thing on knowing that.
+  const promotions: FeedPromotion[] = []
+  if (osdCandidates.length > 0) {
+    const rules = await getDeductionRules(osdCandidates.map((c) => c.supplier))
+    const thresholds = new Map(rules.map((r) => [r.supplier.trim().toLowerCase(), r.threshold]))
+    const candidates: PromotionCandidate[] = []
+    for (const candidate of osdCandidates) {
+      const threshold = thresholds.get(candidate.supplier.toLowerCase())
+      // A supplier with no threshold has no rule, so nothing of theirs can ever
+      // qualify and there is no offer to advertise.
+      if (threshold == null || threshold <= 0) continue
+      candidates.push({
+        itemId: candidate.itemId,
+        supplier: candidate.supplier,
+        storedPence: Math.round(candidate.storedDeduction * 100),
+        // Both figures are stored-price terms, exactly as the basket compares
+        // them, and both are grossed the same way every price in this feed is:
+        // Google quotes a UK shopper what they pay.
+        grossDeduction: gross(candidate.storedDeduction, candidate.taxClassId),
+        grossThreshold: gross(threshold, candidate.taxClassId),
+      })
+    }
+
+    const { promotions: built, promotionIdByItem } = groupPromotions(candidates)
+    for (const item of items) {
+      const id = promotionIdByItem.get(item.id)
+      if (id) item.promotionIds = [id]
+    }
+
+    // Google caps a promotion at 183 days, so a standing offer is served as a
+    // rolling window that every fetch renews rather than an end date invented
+    // once and forgotten.
+    const startsAt = new Date()
+    const endsAt = new Date(startsAt.getTime() + 180 * 24 * 60 * 60 * 1000)
+    for (const promotion of built) {
+      promotions.push({
+        id: promotion.id,
+        longTitle: promotionTitle(promotion, config.currencySymbol),
+        moneyOff: promotion.moneyOff,
+        minimumPurchase: promotion.minimumPurchase,
+        currency,
+        finePrint: promotionTerms(promotion, config.currencySymbol, settings.promotionsFinePrint),
+        startsAt,
+        endsAt,
+      })
+    }
+  }
+
+  return { items, promotions }
 }
