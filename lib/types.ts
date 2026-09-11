@@ -55,6 +55,12 @@ export type GsfSettings = {
   // the account default, so the policies have to exist before the labels mean
   // anything, and only the owner knows whether they do.
   returnPolicyLabelsEnabled: boolean
+  // Carry the listing's own photographs behind each variation's own, minus any
+  // that belong to another variation. Off by default: on a shop whose listing
+  // gallery is a parade of its finishes, the pictures nothing on the site knows
+  // are a variation's would arrive under the wrong variation's price, and that
+  // is not a discovery an update should spring on anyone.
+  parentImagesOnVariations: boolean
   // Serve the product REVIEW feed as well as the product feed. Separate switch
   // and separate address: a shop may want its products on Google without
   // republishing what customers wrote about them.
@@ -92,6 +98,7 @@ export type GsfSettingsView = {
   // instead of leaving the owner wondering why the feed looks unchanged.
   deliveryOptionsAvailable: boolean
   returnPolicyLabelsEnabled: boolean
+  parentImagesOnVariations: boolean
   reviewsFeedEnabled: boolean
   // The review feed's own address, null for the same reasons as feedUrl above.
   reviewsFeedUrl: string | null

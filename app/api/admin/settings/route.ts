@@ -27,6 +27,7 @@ async function view(): Promise<GsfSettingsView> {
     shippingLabelAttributes: labelAttributes,
     deliveryOptionsAvailable: hasDeliveryTimingProvider(),
     returnPolicyLabelsEnabled: settings.returnPolicyLabelsEnabled,
+    parentImagesOnVariations: settings.parentImagesOnVariations,
     reviewsFeedEnabled: settings.reviewsFeedEnabled,
     // The same address as the product feed, one parameter apart - see the
     // route's own note on why there is not a second file name.
@@ -62,6 +63,7 @@ const PatchBody = z.object({
   // the save would only strand an owner whose attribute had been deleted.
   shippingLabelAttributeId: z.string().max(64).optional(),
   returnPolicyLabelsEnabled: z.boolean().optional(),
+  parentImagesOnVariations: z.boolean().optional(),
   reviewsFeedEnabled: z.boolean().optional(),
   customerReviewsEnabled: z.boolean().optional(),
   customerReviewsStyle: z.enum(GSF_OPT_IN_STYLES).optional(),
@@ -89,6 +91,7 @@ export async function PATCH(request: NextRequest) {
     shippingCountry: body.shippingCountry,
     shippingLabelAttributeId: body.shippingLabelAttributeId,
     returnPolicyLabelsEnabled: body.returnPolicyLabelsEnabled,
+    parentImagesOnVariations: body.parentImagesOnVariations,
     reviewsFeedEnabled: body.reviewsFeedEnabled,
     customerReviewsEnabled: body.customerReviewsEnabled,
     customerReviewsStyle: body.customerReviewsStyle,

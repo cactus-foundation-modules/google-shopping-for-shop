@@ -85,7 +85,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -330,6 +330,29 @@ export function GoogleShoppingSettingsTab() {
               every variation of it follows suit. Set up a return policy in Merchant Center named exactly that sentence and Google will
               apply it. Leave this off until those policies exist - a label Merchant Center does not recognise is quietly ignored, and
               the item is treated as returnable after all.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Photographs</h3>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.parentImagesOnVariations}
+            disabled={saving}
+            onChange={(e) => void save({ parentImagesOnVariations: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send the listing&rsquo;s photographs with every variation</span>
+            <span style={hint}>
+              Each variation leads with its own pictures, as it does now, and the rest of the listing&rsquo;s gallery follows behind
+              them - the room shot, the close-up, the dimensions drawing - so a variation photographed once is not sent to Google on
+              one picture. Any listing photograph that belongs to another variation is left out, so a black desk is never shown in
+              oak. Google takes eleven pictures an item and ignores the rest. Leave this off if your listings show their other
+              finishes in photographs that are not filed against those variations here, because nothing can tell those apart.
             </span>
           </span>
         </label>

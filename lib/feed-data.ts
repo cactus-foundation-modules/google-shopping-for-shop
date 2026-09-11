@@ -27,6 +27,7 @@ import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/li
 import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
 import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product-labels'
 import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
+import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
 import { fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
 
@@ -281,6 +282,10 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
     const payload = payloads.get(parent.id)
     if (!payload) continue
     const parentImages = imagesOf(parent.id)
+    // Every picture any of this listing's variations owns - the disabled ones
+    // too, since a variation being off the shelf does not make its photograph
+    // anybody else's. Built once here, read once per variation below.
+    const variantImageKeys = variantImageKeySet(payload.variants)
     const productType = productTypeOf(parent.id, parent.master_category_id)
     const description = descriptionOf(parent, parent.name)
     const condition = data?.condition ?? settings.defaultCondition
@@ -326,7 +331,12 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedItem[]> {
         title: variant.label ? `${parent.name} - ${variant.label}` : parent.name,
         description,
         link,
-        imageLinks: variant.imageUrls.length > 0 ? variant.imageUrls : parentImages,
+        imageLinks: variationImageLinks({
+          ownImages: variant.imageUrls,
+          parentImages,
+          allVariantImages: variantImageKeys,
+          includeParentImages: settings.parentImagesOnVariations,
+        }),
         availability: availabilityOf({
           trackInventory: variant.trackInventory,
           stockCount: variant.stockCount,

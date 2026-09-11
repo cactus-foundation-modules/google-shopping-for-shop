@@ -38,6 +38,7 @@ type SettingsRow = {
   customer_reviews_style: string | null
   customer_reviews_delivery_days: number
   return_policy_labels_enabled: boolean
+  parent_images_on_variations: boolean
 }
 
 // A country Google will take on a shipping group: two letters, upper case.
@@ -62,7 +63,8 @@ export async function getGsfSettings(): Promise<GsfSettings> {
            "merchant_id", "feed_label", "send_delivery_options", "shipping_country",
            "shipping_label_attribute_id",
            "reviews_feed_enabled", "customer_reviews_enabled", "customer_reviews_style",
-           "customer_reviews_delivery_days", "return_policy_labels_enabled"
+           "customer_reviews_delivery_days", "return_policy_labels_enabled",
+           "parent_images_on_variations"
     FROM "gsf_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
@@ -74,7 +76,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
       shippingCountry: 'GB', shippingLabelAttributeId: null,
       reviewsFeedEnabled: false, customerReviewsEnabled: false,
       customerReviewsStyle: 'CENTER_DIALOG', customerReviewsDeliveryDays: 5,
-      returnPolicyLabelsEnabled: false,
+      returnPolicyLabelsEnabled: false, parentImagesOnVariations: false,
     }
   }
   let feedToken = row.feed_token
@@ -106,6 +108,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     customerReviewsStyle: asOptInStyle(row.customer_reviews_style),
     customerReviewsDeliveryDays: asDeliveryDays(Number(row.customer_reviews_delivery_days)),
     returnPolicyLabelsEnabled: row.return_policy_labels_enabled,
+    parentImagesOnVariations: row.parent_images_on_variations,
   }
 }
 
@@ -124,6 +127,7 @@ export async function updateGsfSettings(patch: {
   customerReviewsStyle?: GsfOptInStyle
   customerReviewsDeliveryDays?: number
   returnPolicyLabelsEnabled?: boolean
+  parentImagesOnVariations?: boolean
 }): Promise<void> {
   if (patch.enabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "enabled" = ${patch.enabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
@@ -178,6 +182,9 @@ export async function updateGsfSettings(patch: {
   }
   if (patch.returnPolicyLabelsEnabled !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "return_policy_labels_enabled" = ${patch.returnPolicyLabelsEnabled}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.parentImagesOnVariations !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "parent_images_on_variations" = ${patch.parentImagesOnVariations}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
 }
 

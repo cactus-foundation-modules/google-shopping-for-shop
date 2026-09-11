@@ -21,6 +21,10 @@ modules.
 - One feed item per variation, sharing an `item_group_id` with its siblings, so
   Google shows the right size, colour and finish with the right price and photo.
   Products without variations go along as single items.
+- A variation goes to Google on its own photographs. Optionally the rest of its
+  listing's gallery follows behind them, minus any picture that belongs to
+  another variation - so a listing whose own photographs are of its oak finish
+  never sends one under the black one's price.
 - Each listing links to the variation's own address, which opens the product
   page with that exact combination already chosen.
 - Prices are always sent VAT-inclusive, whatever the storefront displays - as
