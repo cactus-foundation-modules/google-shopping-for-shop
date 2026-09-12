@@ -25,6 +25,12 @@ export type GsfSettings = {
   // Take each product's brand from the supplier the shop files it under
   // (shp_products.supplier), ahead of defaultBrand. Off, the supplier is ignored.
   brandFromSupplier: boolean
+  // Publish each row's own product code (shp_products.sku) as Google's `mpn`.
+  // Off by default: on a catalogue bought in, that code is the maker's part
+  // number and the strongest thing Google can match a barcodeless offer on; on
+  // a shop that numbers its own stock it is a private buying reference. Only
+  // the owner knows which of the two they have.
+  mpnFromSku: boolean
   defaultCondition: GsfCondition
   // The Merchant Center account number the feed is filed under, digits only.
   // Null until typed in, which is the only thing standing between a product and
@@ -91,6 +97,7 @@ export type GsfSettingsView = {
   feedUrl: string | null
   defaultBrand: string
   brandFromSupplier: boolean
+  mpnFromSku: boolean
   defaultCondition: GsfCondition
   merchantId: string
   feedLabel: string
@@ -146,4 +153,20 @@ export const EMPTY_PRODUCT_DATA: Omit<GsfProductData, 'productId'> = {
   googleProductCategory: null,
   condition: null,
   excluded: false,
+}
+
+/** One shop category as the Google-taxonomy mapping screen needs it: its name,
+ *  where it sits, and what has been said about it. Lives here rather than beside
+ *  the database helpers so the admin tab can name the shape without importing a
+ *  file that reaches Prisma. */
+export type GsfCategoryTaxonomyRow = {
+  categoryId: string
+  /** "Office Chairs > Reception & Visitor Chairs" - the trail, so two categories
+   *  called "Accessories" are tellable apart. */
+  path: string
+  /** What the owner typed against this category, '' where nothing has been. */
+  googleProductCategory: string
+  /** What this category ends up sending when nothing is typed against it, taken
+   *  from the nearest parent that has one. '' where no parent has one either. */
+  inherited: string
 }

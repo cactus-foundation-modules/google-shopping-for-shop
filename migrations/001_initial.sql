@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS "gsf_settings" (
     -- Take a product's brand from the supplier the shop files it under
     -- (shp_products.supplier) before reaching for the default above.
     "brand_from_supplier" BOOLEAN NOT NULL DEFAULT true,
+    -- Publish each row's own product code as Google's `mpn`. Off by default:
+    -- on a catalogue bought from a manufacturer that code is the part number
+    -- every other retailer publishes, and on a shop that numbers its own stock
+    -- it is a private buying reference. Only the owner knows which they have.
+    "mpn_from_sku" BOOLEAN NOT NULL DEFAULT false,
     -- Google's condition attribute when a product does not say otherwise. A shop
     -- selling seconds can flip individual products via gsf_product_data.
     "default_condition" TEXT NOT NULL DEFAULT 'new',
@@ -48,4 +53,18 @@ CREATE TABLE IF NOT EXISTS "gsf_product_data" (
     "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "gsf_product_data_pkey" PRIMARY KEY ("product_id"),
     CONSTRAINT "gsf_product_data_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "shp_products"("id") ON DELETE CASCADE
+);
+
+-- Google's own product taxonomy, per shop category rather than per product: a
+-- shop with twelve thousand products has perhaps forty categories. A product's
+-- own `google_product_category` still wins where one is typed in, and a
+-- category with no row inherits from the nearest parent that has one.
+CREATE TABLE IF NOT EXISTS "gsf_category_taxonomy" (
+    "category_id" TEXT NOT NULL,
+    -- Either the numeric id or the full "A > B > C" path. Never empty -
+    -- nothing to say is no row.
+    "google_product_category" TEXT NOT NULL,
+    "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "gsf_category_taxonomy_pkey" PRIMARY KEY ("category_id"),
+    CONSTRAINT "gsf_category_taxonomy_category_id_fkey" FOREIGN KEY ("category_id") REFERENCES "shp_categories"("id") ON DELETE CASCADE
 );

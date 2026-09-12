@@ -32,6 +32,7 @@ import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/ret
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
 import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
+import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
@@ -60,6 +61,9 @@ type ChildRow = {
   id: string
   slug: string
   status: string
+  // The code this variation is ordered by, published as Google's `mpn` when
+  // the owner has said the code is the maker's rather than their own.
+  sku: string | null
   track_inventory: boolean
   stock_count: number | null
   out_of_stock_behaviour: string
@@ -172,7 +176,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const childById = new Map<string, ChildRow>()
   if (childIds.length > 0) {
     const rows = await prisma.$queryRaw<ChildRow[]>`
-      SELECT "id", "slug", "status", "track_inventory", "stock_count", "out_of_stock_behaviour",
+      SELECT "id", "slug", "status", "sku", "track_inventory", "stock_count", "out_of_stock_behaviour",
              "is_pre_order", "tax_class_id", "weight_unit", "supplier",
              "returnable", "non_returnable_note", "order_size_deduction"
       FROM "shp_products" WHERE "id" IN (${Prisma.join(childIds)})
@@ -209,12 +213,16 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- Shared lookups ------------------------------------------------------
   const parentIds = parents.map((p) => p.id)
   const standaloneIds = standalone.map((p) => p.id)
-  const [productData, mediaByProduct, categories] = await Promise.all([
+  const [productData, mediaByProduct, categories, categoryTaxonomy] = await Promise.all([
     getProductDataForProducts([...parentIds, ...standaloneIds]),
     getProductMediaForProducts([...parentIds, ...standaloneIds]),
     listCategories(),
+    getCategoryTaxonomy(),
   ])
   const categoryPaths = buildCategoryPaths(categories)
+  // Google's own taxonomy, resolved through the category tree so a leaf with
+  // nothing typed against it still answers with its parent's.
+  const googleCategoryFor = googleCategoryResolver(categories, categoryTaxonomy)
 
   // Lead category per product: the master when set, else the first filed. Bulk
   // fallback query instead of a per-product helper call.
@@ -230,10 +238,20 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     `
     for (const row of rows) fallbackCategory.set(row.product_id, row.category_id)
   }
+  // The one category an item is filed under for Google's benefit: the master
+  // where the product has one, else the first it is filed in. Both the shop's
+  // own trail (product_type) and Google's taxonomy come off this same answer,
+  // so the two can never describe an item as two different things.
+  const leadCategoryOf = (productId: string, masterCategoryId: string | null): string | undefined =>
+    masterCategoryId ?? fallbackCategory.get(productId)
   const productTypeOf = (productId: string, masterCategoryId: string | null): string | undefined => {
-    const categoryId = masterCategoryId ?? fallbackCategory.get(productId)
+    const categoryId = leadCategoryOf(productId, masterCategoryId)
     return categoryId ? categoryPaths.get(categoryId) : undefined
   }
+  // A product's own answer outranks its category's - it is the more specific
+  // thing said about it, and the only reason to type one in is to disagree.
+  const googleCategoryOf = (productId: string, masterCategoryId: string | null, own: string | null | undefined): string | undefined =>
+    own?.trim() || googleCategoryFor(leadCategoryOf(productId, masterCategoryId))
 
   // First supplier name with anything in it, so a blank column on the row nearest
   // the item still lets the one behind it answer.
@@ -309,6 +327,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     // anybody else's. Built once here, read once per variation below.
     const variantImageKeys = variantImageKeySet(payload.variants)
     const productType = productTypeOf(parent.id, parent.master_category_id)
+    const googleCategory = googleCategoryOf(parent.id, parent.master_category_id, data?.googleProductCategory)
     const description = descriptionOf(parent, parent.name)
     const condition = data?.condition ?? settings.defaultCondition
 
@@ -368,10 +387,17 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         price: gross(variant.price, taxClassId),
         ...(onSale && variant.salePrice != null ? { salePrice: gross(variant.salePrice, taxClassId) } : {}),
         currency,
-        ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, brandFallbacks(child.supplier, parent.supplier), variant.barcode, { standalone: false }),
+        ...identifiersOf(
+          data ?? { brand: null, gtin: null, mpn: null },
+          brandFallbacks(child.supplier, parent.supplier),
+          // The variation's own codes. Its own SKU and not its listing's: a
+          // part number names one part, and the child row is the part.
+          { barcode: variant.barcode, sku: variant.sku },
+          { standalone: false, mpnFromSku: settings.mpnFromSku },
+        ),
         condition,
         productType,
-        ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
+        ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
         shippingWeight: shippingWeightOf(variant.weight, child.weight_unit),
         // The variation's own answer where it has one, its listing's where it
         // has not - resolved here rather than in a pass at the bottom because
@@ -402,6 +428,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     const data = productData.get(product.id)
     if (data?.excluded) continue
     const onSale = isOnSale(product, config.enabledPriceTypes)
+    const googleCategory = googleCategoryOf(product.id, product.masterCategoryId, data?.googleProductCategory)
     taxClassByItem.set(product.id, product.taxClassId)
 
     items.push({
@@ -417,10 +444,15 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       price: gross(Number(product.price), product.taxClassId),
       ...(onSale && product.salePrice != null ? { salePrice: gross(Number(product.salePrice), product.taxClassId) } : {}),
       currency,
-      ...identifiersOf(data ?? { brand: null, gtin: null, mpn: null }, brandFallbacks(product.supplier), product.barcode, { standalone: true }),
+      ...identifiersOf(
+        data ?? { brand: null, gtin: null, mpn: null },
+        brandFallbacks(product.supplier),
+        { barcode: product.barcode, sku: product.sku },
+        { standalone: true, mpnFromSku: settings.mpnFromSku },
+      ),
       condition: data?.condition ?? settings.defaultCondition,
       productType: productTypeOf(product.id, product.masterCategoryId),
-      ...(data?.googleProductCategory ? { googleProductCategory: data.googleProductCategory } : {}),
+      ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
       shippingWeight: shippingWeightOf(product.weight, product.weightUnit),
       // No listing above it to inherit from, so it answers as both halves.
       ...(returnLabels

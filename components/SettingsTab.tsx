@@ -4,6 +4,7 @@
 // Shop lends the space and nothing else: own fetch, own save, own module API.
 import { useCallback, useEffect, useState } from 'react'
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
+import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -87,7 +88,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; promotionsFeedEnabled?: boolean; promotionsFinePrint?: string; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; mpnFromSku?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; promotionsFeedEnabled?: boolean; promotionsFinePrint?: string; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -578,6 +579,25 @@ export function GoogleShoppingSettingsTab() {
             <span style={hint}>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</span>
           </span>
         </label>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.mpnFromSku}
+            disabled={saving}
+            onChange={(e) => void save({ mpnFromSku: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your product codes as the maker&rsquo;s part number</span>
+            <span style={hint}>
+              Google files your listing alongside everyone else&rsquo;s selling the same thing by barcode first, and by brand and part
+              number second. If your product codes are the maker&rsquo;s own - the codes off their price list, printed on the box - this
+              is what puts you in the same place as every other shop selling it, rather than on a page of your own. Each variation sends
+              its own code. Leave it off if your codes are your own invention or something you would rather not publish: it tells the
+              world what you call your stock, and a part number nobody else uses matches nothing anyway.
+            </span>
+          </span>
+        </label>
         <label style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
           <select
@@ -593,6 +613,8 @@ export function GoogleShoppingSettingsTab() {
           <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
         </label>
       </section>
+
+      <CategoryTaxonomySection />
 
       {saved && <p style={{ color: 'var(--color-success, var(--color-text))', fontSize: '0.875rem' }}>Saved.</p>}
       {error && <p role="alert" style={{ color: 'var(--color-danger)', fontSize: '0.875rem' }}>{error}</p>}

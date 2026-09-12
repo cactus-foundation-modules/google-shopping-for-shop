@@ -30,6 +30,9 @@ type ProductRow = {
   id: string
   barcode: string | null
   supplier: string | null
+  /** The code the listing is ordered by, published as its part number only
+   *  where the owner has said the code is the maker's. */
+  sku: string | null
 }
 
 async function getProductRows(productIds: string[]): Promise<Map<string, ProductRow>> {
@@ -37,7 +40,7 @@ async function getProductRows(productIds: string[]): Promise<Map<string, Product
   const unique = [...new Set(productIds)].filter(Boolean)
   if (unique.length === 0) return map
   const rows = await prisma.$queryRaw<ProductRow[]>`
-    SELECT "id", "barcode", "supplier" FROM "shp_products" WHERE "id" IN (${Prisma.join(unique)})
+    SELECT "id", "barcode", "supplier", "sku" FROM "shp_products" WHERE "id" IN (${Prisma.join(unique)})
   `
   for (const row of rows) map.set(row.id, row)
   return map
@@ -74,9 +77,12 @@ export async function reviewFeedPublisher(siteUrl: string): Promise<ReviewFeedPu
  *   - reviews of a product the owner has kept OUT of the product feed. A shop
  *     that will not advertise a product on Google has not asked Google to
  *     publish opinions of it either.
- *   - SKUs. The product feed withholds the shop's buying codes from shoppers
- *     (see identifiersOf in lib/feed-data.ts) and this feed holds the same line,
- *     even though Google would accept them.
+ *   - the shop's buying codes as codes. Google would take a `skus` list; the
+ *     product feed publishes no such thing and neither does this. Where the
+ *     owner has said their product codes are the MAKER's part numbers, the
+ *     code travels as the part number it is and nothing else changes - the same
+ *     rule identifiersOf applies to the product feed, so one product is never
+ *     given two identities by two documents.
  */
 export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFeedItem[]> {
   const reviews = await getAllPublishedReviews({ pageSize: PAGE_SIZE, max: MAX_REVIEWS })
@@ -101,6 +107,7 @@ export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFee
     // product's Google tab. A malformed one is dropped rather than sent: Google
     // rejects the review outright rather than ignoring the identifier.
     const gtin = normaliseGtin(row?.barcode) ?? normaliseGtin(data?.gtin ?? null)
+    const mpn = data?.mpn?.trim() || (settings.mpnFromSku ? row?.sku?.trim() || null : null)
     const url = productUrl(siteUrl, review.productSlug, config.productUrlStyle)
 
     items.push({
@@ -123,10 +130,11 @@ export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFee
         url,
         name: review.productName,
         gtins: gtin ? [gtin] : undefined,
-        // MPN only where the owner typed one. Unlike the product feed there is
-        // no variation to confuse it with here - a review is written about the
-        // product as a whole.
-        mpns: data?.mpn ? [data.mpn] : undefined,
+        // The owner's own answer first, then the product's code where they have
+        // said the codes are the maker's. Unlike the product feed there is no
+        // variation to confuse it with here - a review is written about the
+        // product as a whole, so the listing's own code is the right one.
+        mpns: mpn ? [mpn] : undefined,
         brands: brand ? [brand] : undefined,
       }],
       // "post_fulfillment" is a claim about how the review was collected, so it

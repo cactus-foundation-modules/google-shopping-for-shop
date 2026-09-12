@@ -60,8 +60,8 @@ export const googleShoppingMerchantFacts = {
     const [settings, data, rows] = await Promise.all([
       getGsfSettings(),
       getProductDataForProducts(ids),
-      prisma.$queryRaw<Array<{ id: string; supplier: string | null; barcode: string | null }>>`
-        SELECT "id", "supplier", "barcode" FROM "shp_products" WHERE "id" IN (${Prisma.join(ids)})
+      prisma.$queryRaw<Array<{ id: string; supplier: string | null; barcode: string | null; sku: string | null }>>`
+        SELECT "id", "supplier", "barcode", "sku" FROM "shp_products" WHERE "id" IN (${Prisma.join(ids)})
       `,
     ])
 
@@ -74,8 +74,8 @@ export const googleShoppingMerchantFacts = {
           defaultBrand: settings.defaultBrand || null,
           useSupplier: settings.brandFromSupplier,
         },
-        row.barcode,
-        { standalone: true },
+        { barcode: row.barcode, sku: row.sku },
+        { standalone: true, mpnFromSku: settings.mpnFromSku },
       )
       const condition = stored.condition ?? settings.defaultCondition
       const facts: MerchantIdentifiers = {

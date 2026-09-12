@@ -27,6 +27,7 @@ type SettingsRow = {
   feed_token: string | null
   default_brand: string | null
   brand_from_supplier: boolean
+  mpn_from_sku: boolean
   default_condition: string
   merchant_id: string | null
   feed_label: string | null
@@ -61,7 +62,7 @@ function mintToken(): string {
  *  concurrent first reads cannot each install their own token. */
 export async function getGsfSettings(): Promise<GsfSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
-    SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "default_condition",
+    SELECT "enabled", "feed_token", "default_brand", "brand_from_supplier", "mpn_from_sku", "default_condition",
            "merchant_id", "feed_label", "send_delivery_options", "shipping_country",
            "shipping_label_attribute_id",
            "reviews_feed_enabled", "customer_reviews_enabled", "customer_reviews_style",
@@ -74,7 +75,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     // The migration seeds the singleton; reaching here means it has not run yet.
     return {
       enabled: false, feedToken: null, defaultBrand: null, brandFromSupplier: true,
-      defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false,
+      mpnFromSku: false, defaultCondition: 'new', merchantId: null, feedLabel: null, sendDeliveryOptions: false,
       shippingCountry: 'GB', shippingLabelAttributeId: null,
       reviewsFeedEnabled: false, customerReviewsEnabled: false,
       customerReviewsStyle: 'CENTER_DIALOG', customerReviewsDeliveryDays: 5,
@@ -100,6 +101,7 @@ export async function getGsfSettings(): Promise<GsfSettings> {
     feedToken,
     defaultBrand: row.default_brand,
     brandFromSupplier: row.brand_from_supplier,
+    mpnFromSku: row.mpn_from_sku,
     defaultCondition: asCondition(row.default_condition),
     merchantId: row.merchant_id,
     feedLabel: row.feed_label,
@@ -121,6 +123,7 @@ export async function updateGsfSettings(patch: {
   enabled?: boolean
   defaultBrand?: string | null
   brandFromSupplier?: boolean
+  mpnFromSku?: boolean
   defaultCondition?: GsfCondition
   merchantId?: string | null
   feedLabel?: string | null
@@ -145,6 +148,9 @@ export async function updateGsfSettings(patch: {
   }
   if (patch.brandFromSupplier !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "brand_from_supplier" = ${patch.brandFromSupplier}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
+  }
+  if (patch.mpnFromSku !== undefined) {
+    await prisma.$executeRaw`UPDATE "gsf_settings" SET "mpn_from_sku" = ${patch.mpnFromSku}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
   }
   if (patch.defaultCondition !== undefined) {
     await prisma.$executeRaw`UPDATE "gsf_settings" SET "default_condition" = ${patch.defaultCondition}, "updated_at" = CURRENT_TIMESTAMP WHERE "id" = 'singleton'`
