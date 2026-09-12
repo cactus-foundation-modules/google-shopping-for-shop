@@ -9,12 +9,14 @@ import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfSettingsView } from '@/modul
 import { hasDeliveryTimingProvider } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
 import { listLabelAttributes } from '@/modules/google-shopping-for-shop/lib/product-labels'
 import { hasReviewsProvider } from '@/modules/google-shopping-for-shop/lib/reviews-source'
+import { getWithheldReport } from '@/modules/google-shopping-for-shop/lib/withheld'
 
 async function view(): Promise<GsfSettingsView> {
-  const [settings, labelAttributes, shopConfig] = await Promise.all([
+  const [settings, labelAttributes, shopConfig, withheld] = await Promise.all([
     getGsfSettings(),
     listLabelAttributes(),
     getShopConfigCached(),
+    getWithheldReport(),
   ])
   const siteUrl = getSiteUrlOrNull()
   const base = siteUrl && settings.feedToken ? `${siteUrl}/google-shopping/feed.xml?key=${settings.feedToken}` : null
@@ -48,6 +50,13 @@ async function view(): Promise<GsfSettingsView> {
     customerReviewsEnabled: settings.customerReviewsEnabled,
     customerReviewsStyle: settings.customerReviewsStyle,
     customerReviewsDeliveryDays: settings.customerReviewsDeliveryDays,
+    withheld: {
+      total: withheld.items.length,
+      // A handful is enough to recognise what is missing and go and fix it; the
+      // full list belongs in the catalogue, not on a settings tab.
+      titles: withheld.items.slice(0, 10).map((i) => i.title),
+      checkedAt: withheld.checkedAt?.toISOString() ?? null,
+    },
   }
 }
 

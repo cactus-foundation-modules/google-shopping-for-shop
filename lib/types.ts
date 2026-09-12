@@ -132,6 +132,11 @@ export type GsfSettingsView = {
   customerReviewsEnabled: boolean
   customerReviewsStyle: GsfOptInStyle
   customerReviewsDeliveryDays: number
+  // Products the last feed build refused to send, because Google would reject
+  // them on sight. `checkedAt` null means no feed has been fetched since this
+  // shipped, which is NOT the same as "none" - the tab draws the two
+  // differently rather than showing a clean zero it has not earned.
+  withheld: { total: number; titles: string[]; checkedAt: string | null }
 }
 
 // Per-product Google fields, as stored (gsf_product_data). All-null plus

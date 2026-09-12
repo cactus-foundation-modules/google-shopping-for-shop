@@ -181,6 +181,37 @@ export function GoogleShoppingSettingsTab() {
           </button>
           <span style={hint}>The address carries its own key, so only Google and you know it. If it leaks, mint a new one.</span>
         </div>
+
+        {/* Products the feed refused to send. Google requires a picture on every
+            listing and rejects anything without one, so sending them would only
+            fill Merchant Center with rejections nobody asked for - but dropping
+            them silently just moves the puzzle here, which is why this says so
+            out loud. Drawn only once a fetch has actually happened: a reassuring
+            "none" before Google has ever called would be a number we invented. */}
+        {settings.withheld.checkedAt && settings.withheld.total > 0 && (
+          <div style={{ marginTop: '1rem', padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm, 6px)' }}>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--color-text)' }}>
+              <strong>
+                {settings.withheld.total === 1
+                  ? '1 product is not being sent to Google'
+                  : `${settings.withheld.total} products are not being sent to Google`}
+              </strong>{' '}
+              because {settings.withheld.total === 1 ? 'it has' : 'they have'} no picture. Google turns down any listing without one, so
+              sending {settings.withheld.total === 1 ? 'it' : 'them'} would only earn a rejection. Add a photograph and{' '}
+              {settings.withheld.total === 1 ? 'it goes' : 'they go'} along with the next fetch.
+            </p>
+            <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+              {settings.withheld.titles.map((title) => (
+                <li key={title}>{title}</li>
+              ))}
+            </ul>
+            {settings.withheld.total > settings.withheld.titles.length && (
+              <p style={{ ...hint, marginTop: '0.5rem' }}>
+                …and {settings.withheld.total - settings.withheld.titles.length} more.
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       <section style={card}>

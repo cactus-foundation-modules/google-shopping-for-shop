@@ -22,6 +22,7 @@ import { buildFeedXml } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { collectReviewFeedItems, reviewFeedPublisher } from '@/modules/google-shopping-for-shop/lib/review-feed-data'
 import { buildReviewFeedXml } from '@/modules/google-shopping-for-shop/lib/review-feed-xml'
 import { buildPromotionsXml } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
+import { recordWithheldItems } from '@/modules/google-shopping-for-shop/lib/withheld'
 
 const notFound = () => new Response('Not found', { status: 404 })
 
@@ -71,7 +72,18 @@ export async function GET(request: NextRequest) {
 
   // One pass either way: the promotions and the ids the items carry to join them
   // are worked out together, so the two documents cannot drift apart.
-  const { items, promotions } = await collectFeedItems(siteUrl)
+  const { items, promotions, withheld } = await collectFeedItems(siteUrl)
+
+  // What was refused, written down for the settings tab. Deliberately not
+  // allowed to fail the request: Google is here for the feed, and a note for the
+  // admin is not worth handing Merchant Center a 500. Recorded on the product
+  // fetch only - the promotions document is built from the same pass, and
+  // writing it twice would just race itself for no gain.
+  if (!wantsPromotions) {
+    await recordWithheldItems(withheld).catch((error) => {
+      console.error('[google-shopping] could not record withheld items:', error)
+    })
+  }
 
   if (wantsPromotions) {
     return xml(buildPromotionsXml(

@@ -32,6 +32,7 @@ import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/ret
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
 import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
+import { partitionPublishable } from '@/modules/google-shopping-for-shop/lib/withholding'
 import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
@@ -122,7 +123,12 @@ function descriptionOf(parent: { meta_description?: string | null; short_descrip
  *  Google separately, minutes or hours apart, and are joined only by the
  *  promotion ids both spell - which is precisely why they are derived together
  *  here rather than by two scans that could disagree. */
-export type FeedData = { items: FeedItem[]; promotions: FeedPromotion[] }
+/** A product the feed built a row for and then withheld, with the reason. Kept
+ *  so the admin can say WHY something is not being advertised - a silently
+ *  dropped product is a support ticket six weeks later. */
+export type FeedWithheldItem = { id: string; title: string; reason: 'no-image' }
+
+export type FeedData = { items: FeedItem[]; promotions: FeedPromotion[]; withheld: FeedWithheldItem[] }
 
 export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const [config, settings] = await Promise.all([getShopConfigCached(), getGsfSettings()])
@@ -536,6 +542,32 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     }))
   }
 
+  // ----- Withholding what cannot possibly be accepted -------------------------
+  //
+  // `image_link` is required, and Google rejects an item without one every
+  // single time - there is no shop, no category and no country where an
+  // imageless row is anything but a guaranteed disapproval sitting in Merchant
+  // Center. Publishing it anyway buys nothing and costs the owner a rejection
+  // they then have to interpret, so the row is withheld and counted instead.
+  //
+  // Counted rather than merely dropped: silence here just moves the confusion
+  // from Merchant Center to "why is this product not on Google", which is the
+  // harder question to answer. The settings tab reads this back.
+  const { publishable, withheld } = partitionPublishable(items)
+  items.length = 0
+  items.push(...publishable)
+
+  // A withheld row must not leave a promotion behind advertising it. Cheap to
+  // keep in step here, and a promotions source naming items that are not in the
+  // product feed is its own class of Merchant Center complaint.
+  if (withheld.length > 0) {
+    const live = new Set(items.map((i) => i.id))
+    for (let i = osdCandidates.length - 1; i >= 0; i--) {
+      const candidate = osdCandidates[i]
+      if (candidate && !live.has(candidate.itemId)) osdCandidates.splice(i, 1)
+    }
+  }
+
   // ----- Promotions ----------------------------------------------------------
   // One promotion per (supplier, stamped amount), and the id of the one it
   // belongs to written onto each item. The supplier read is the last query of
@@ -594,5 +626,5 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     }
   }
 
-  return { items, promotions }
+  return { items, promotions, withheld }
 }
