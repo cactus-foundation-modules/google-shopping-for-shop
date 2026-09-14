@@ -34,6 +34,7 @@ import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem,
 import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
 import { partitionPublishable } from '@/modules/google-shopping-for-shop/lib/withholding'
 import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
+import { buildTitleTemplateContext, getTitleTemplatesForItems, renderTitleTemplate } from '@/modules/google-shopping-for-shop/lib/title-templates'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
@@ -219,11 +220,12 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- Shared lookups ------------------------------------------------------
   const parentIds = parents.map((p) => p.id)
   const standaloneIds = standalone.map((p) => p.id)
-  const [productData, mediaByProduct, categories, categoryTaxonomy] = await Promise.all([
+  const [productData, mediaByProduct, categories, categoryTaxonomy, titleTemplates] = await Promise.all([
     getProductDataForProducts([...parentIds, ...standaloneIds]),
     getProductMediaForProducts([...parentIds, ...standaloneIds]),
     listCategories(),
     getCategoryTaxonomy(),
+    getTitleTemplatesForItems([...childIds, ...standaloneIds]),
   ])
   const categoryPaths = buildCategoryPaths(categories)
   // Google's own taxonomy, resolved through the category tree so a leaf with
@@ -371,11 +373,34 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       const onSale = isOnSale(priced, config.enabledPriceTypes)
       const taxClassId = child.tax_class_id ?? parent.tax_class_id
       taxClassByItem.set(variant.childProductId, taxClassId)
+      const identifiers = identifiersOf(
+        data ?? { brand: null, gtin: null, mpn: null },
+        brandFallbacks(child.supplier, parent.supplier),
+        // The variation's own codes. Its own SKU and not its listing's: a
+        // part number names one part, and the child row is the part.
+        { barcode: variant.barcode, sku: variant.sku },
+        { standalone: false, mpnFromSku: settings.mpnFromSku },
+      )
+      const originalTitle = variant.label ? `${parent.name} - ${variant.label}` : parent.name
+      const title = renderTitleTemplate(
+        titleTemplates.get(variant.childProductId),
+        buildTitleTemplateContext({
+          originalTitle,
+          parentTitle: parent.name,
+          variantLabel: variant.label,
+          sku: child.sku,
+          mpn: identifiers.mpn,
+          gtin: identifiers.gtin,
+          brand: identifiers.brand,
+          options: pairs,
+        }),
+        originalTitle,
+      ).title
 
       items.push({
         id: variant.childProductId,
         itemGroupId: parent.id,
-        title: variant.label ? `${parent.name} - ${variant.label}` : parent.name,
+        title,
         description,
         link,
         imageLinks: variationImageLinks({
@@ -393,14 +418,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         price: gross(variant.price, taxClassId),
         ...(onSale && variant.salePrice != null ? { salePrice: gross(variant.salePrice, taxClassId) } : {}),
         currency,
-        ...identifiersOf(
-          data ?? { brand: null, gtin: null, mpn: null },
-          brandFallbacks(child.supplier, parent.supplier),
-          // The variation's own codes. Its own SKU and not its listing's: a
-          // part number names one part, and the child row is the part.
-          { barcode: variant.barcode, sku: variant.sku },
-          { standalone: false, mpnFromSku: settings.mpnFromSku },
-        ),
+        ...identifiers,
         condition,
         productType,
         ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
@@ -436,10 +454,29 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     const onSale = isOnSale(product, config.enabledPriceTypes)
     const googleCategory = googleCategoryOf(product.id, product.masterCategoryId, data?.googleProductCategory)
     taxClassByItem.set(product.id, product.taxClassId)
+    const identifiers = identifiersOf(
+      data ?? { brand: null, gtin: null, mpn: null },
+      brandFallbacks(product.supplier),
+      { barcode: product.barcode, sku: product.sku },
+      { standalone: true, mpnFromSku: settings.mpnFromSku },
+    )
+    const title = renderTitleTemplate(
+      titleTemplates.get(product.id),
+      buildTitleTemplateContext({
+        originalTitle: product.name,
+        parentTitle: product.name,
+        sku: product.sku,
+        mpn: identifiers.mpn,
+        gtin: identifiers.gtin,
+        brand: identifiers.brand,
+        options: [],
+      }),
+      product.name,
+    ).title
 
     items.push({
       id: product.id,
-      title: product.name,
+      title,
       description: descriptionOf(
         { meta_description: product.metaDescription, short_description: product.shortDescription, description: product.description },
         product.name,
@@ -450,12 +487,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       price: gross(Number(product.price), product.taxClassId),
       ...(onSale && product.salePrice != null ? { salePrice: gross(Number(product.salePrice), product.taxClassId) } : {}),
       currency,
-      ...identifiersOf(
-        data ?? { brand: null, gtin: null, mpn: null },
-        brandFallbacks(product.supplier),
-        { barcode: product.barcode, sku: product.sku },
-        { standalone: true, mpnFromSku: settings.mpnFromSku },
-      ),
+      ...identifiers,
       condition: data?.condition ?? settings.defaultCondition,
       productType: productTypeOf(product.id, product.masterCategoryId),
       ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
