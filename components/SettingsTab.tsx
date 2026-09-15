@@ -49,13 +49,17 @@ const OPT_IN_STYLE_LABELS: Record<GsfOptInStyle, string> = {
 
 export function GoogleShoppingSettingsTab() {
   const [settings, setSettings] = useState<GsfSettingsView | null>(null)
+  const [envStatus, setEnvStatus] = useState<Record<string, boolean>>({})
+  const [credentialDraft, setCredentialDraft] = useState('')
   const [brandDraft, setBrandDraft] = useState('')
   const [merchantDraft, setMerchantDraft] = useState('')
   const [feedLabelDraft, setFeedLabelDraft] = useState('')
   const [countryDraft, setCountryDraft] = useState('')
   const [deliveryDaysDraft, setDeliveryDaysDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [savingCredential, setSavingCredential] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [savedCredential, setSavedCredential] = useState(false)
   const [copied, setCopied] = useState<'products' | 'reviews' | 'promotions' | null>(null)
   const [finePrintDraft, setFinePrintDraft] = useState('')
   const [error, setError] = useState('')
@@ -65,7 +69,9 @@ export function GoogleShoppingSettingsTab() {
       const res = await fetch(`${BASE}/settings`)
       if (!res.ok) throw new Error('Could not load settings')
       const body = (await res.json()) as { settings: GsfSettingsView }
+      const env = await fetch('/api/admin/env').then((r) => (r.ok ? r.json() : { vars: {} })).catch(() => ({ vars: {} }))
       setSettings(body.settings)
+      setEnvStatus((env as { vars?: Record<string, boolean> }).vars ?? {})
       setBrandDraft(body.settings.defaultBrand)
       setMerchantDraft(body.settings.merchantId)
       setFeedLabelDraft(body.settings.feedLabel)
@@ -112,6 +118,39 @@ export function GoogleShoppingSettingsTab() {
       setError(e instanceof Error ? e.message : 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function saveCredential() {
+    setSavingCredential(true)
+    setSavedCredential(false)
+    setError('')
+    try {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(credentialDraft)
+      } catch {
+        throw new Error('That does not look like JSON. Paste the whole service-account file, including the curly brackets.')
+      }
+      const account = parsed as { type?: unknown; client_email?: unknown; private_key?: unknown }
+      if (account.type !== 'service_account' || typeof account.client_email !== 'string' || typeof account.private_key !== 'string') {
+        throw new Error('That JSON is not a Google service account key. It should include type, client_email and private_key.')
+      }
+      const res = await fetch('/api/admin/env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vars: [{ key: 'GOOGLE_SHOPPING_SERVICE_ACCOUNT_JSON', value: credentialDraft }] }),
+      })
+      const body = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'Could not save Google credentials')
+      setCredentialDraft('')
+      setEnvStatus((current) => ({ ...current, GOOGLE_SHOPPING_SERVICE_ACCOUNT_JSON: true }))
+      setSavedCredential(true)
+      setTimeout(() => setSavedCredential(false), 3000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save Google credentials')
+    } finally {
+      setSavingCredential(false)
     }
   }
 
@@ -263,6 +302,44 @@ export function GoogleShoppingSettingsTab() {
           </div>
           <span style={hint}>Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
         </label>
+        <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
+          <h4 style={{ ...legend, fontSize: '0.875rem' }}>Merchant API access</h4>
+          <span style={hint}>
+            Needed for the product workbench&apos;s match snapshot and benchmark prices. The feed itself does not need this - Google
+            reads that on its own schedule.
+          </span>
+          <p style={{ ...hint, marginTop: '0.5rem' }}>
+            Current key: {envStatus.GOOGLE_SHOPPING_SERVICE_ACCOUNT_JSON ? 'set' : 'not set'}
+          </p>
+          <ol style={{ margin: '0.75rem 0 0', paddingLeft: '1.25rem', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+            <li>In Google Cloud, open the project connected to Merchant Center, then go to IAM &amp; Admin → Service Accounts.</li>
+            <li>Create a service account, then open it, go to Keys, choose Add key → Create new key → JSON, and download the file.</li>
+            <li>In Merchant Center, add that service-account email as a user with permission to view product and report data.</li>
+            <li>Open the downloaded JSON file, paste the whole contents below, and save it here.</li>
+          </ol>
+          <label style={{ display: 'block', marginTop: '0.75rem' }}>
+            <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Service account JSON</span>
+            <textarea
+              value={credentialDraft}
+              rows={6}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={'{ "type": "service_account", "client_email": "...", "private_key": "..." }'}
+              onChange={(e) => setCredentialDraft(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 680, resize: 'vertical', fontFamily: 'var(--font-mono, monospace)' }}
+            />
+            <span style={hint}>Cactus stores this as a Vercel environment variable. Paste a new JSON key here whenever you need to replace it.</span>
+          </label>
+          <button
+            type="button"
+            className="btn"
+            disabled={savingCredential || credentialDraft.trim() === ''}
+            onClick={() => void saveCredential()}
+            style={{ marginTop: '0.75rem' }}
+          >
+            {savingCredential ? 'Saving…' : savedCredential ? 'Saved' : 'Save API key'}
+          </button>
+        </div>
       </section>
 
       <section style={card}>
