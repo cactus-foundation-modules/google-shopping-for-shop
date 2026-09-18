@@ -1,333 +1,515 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// Shop -> Products -> Google Shopping: every item in the Google feed, how
+// Google sees it, and the feed-only titles it is sent.
+//
+// Built for catalogues in the tens of thousands. The server holds the whole
+// feed in memory and answers a search in milliseconds (lib/workbench-data.ts);
+// this screen keeps the query in the address bar, debounces typing, cancels
+// stale requests and always says what it is doing while it waits.
+//
+// This file only wires the parts together. The list's request lifecycle is
+// use-workbench-list.ts, selection use-selection.ts, unsaved edits
+// use-title-drafts.ts, and each part of the screen its own component.
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAdminPath } from '@/components/admin/AdminPathContext'
+import { UnsavedChangesModal } from '@/components/admin/UnsavedChangesModal'
+import { useUnsavedChanges } from '@/components/admin/useUnsavedChanges'
+import { isFilteredQuery, writeWorkbenchQuery, type WorkbenchQuery } from '@/modules/google-shopping-for-shop/lib/workbench-query'
+import {
+  exportHref,
+  fetchChanges,
+  fetchHistory,
+  refreshMatchStatus,
+  runBulk,
+  saveTemplates,
+  undoChange,
+  type BulkAction,
+  type BulkOutcome,
+  type BulkScope,
+  type ChangeEntry,
+} from '@/modules/google-shopping-for-shop/components/workbench/api'
+import { BulkBar } from '@/modules/google-shopping-for-shop/components/workbench/BulkBar'
+import { BulkConfirmDialog } from '@/modules/google-shopping-for-shop/components/workbench/BulkConfirmDialog'
+import { FilterBar } from '@/modules/google-shopping-for-shop/components/workbench/FilterBar'
+import { ItemRow } from '@/modules/google-shopping-for-shop/components/workbench/ItemRow'
+import type { HistoryState } from '@/modules/google-shopping-for-shop/components/workbench/MatchHistory'
+import { Pager } from '@/modules/google-shopping-for-shop/components/workbench/Pager'
+import { RecentChanges } from '@/modules/google-shopping-for-shop/components/workbench/RecentChanges'
+import { StatusLine } from '@/modules/google-shopping-for-shop/components/workbench/StatusLine'
+import { SummaryPanel } from '@/modules/google-shopping-for-shop/components/workbench/SummaryPanel'
+import { agoFromSeconds, formatCount, formatDateTime, plural } from '@/modules/google-shopping-for-shop/components/workbench/format'
+import { useElapsedSeconds } from '@/modules/google-shopping-for-shop/components/workbench/use-elapsed-seconds'
+import { useSelection } from '@/modules/google-shopping-for-shop/components/workbench/use-selection'
+import { useStableCallback } from '@/modules/google-shopping-for-shop/components/workbench/use-stable-callback'
+import { useTitleDrafts } from '@/modules/google-shopping-for-shop/components/workbench/use-title-drafts'
+import { useWorkbenchList } from '@/modules/google-shopping-for-shop/components/workbench/use-workbench-list'
+import { workbenchCss } from '@/modules/google-shopping-for-shop/components/workbench/workbench-css'
 
-const BASE = '/api/m/google-shopping-for-shop/admin'
+type Notice = { tone: 'ok' | 'error' | 'info'; text: string; undoBatchId?: string | null }
 
-type MatchState = 'matched' | 'unmatched' | 'unknown'
+type PendingBulk = { action: BulkAction; scope: BulkScope; outcome: BulkOutcome }
 
-type Token = {
-  token: string
-  value: string
+// The save route takes 500 edits a call.
+const SAVE_CHUNK = 500
+const SKELETON_ROWS = 8
+
+function messageOf(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
 }
 
-type WorkbenchItem = {
-  id: string
-  parentTitle: string
-  originalTitle: string
-  renderedTitle: string
-  titleTemplate: string | null
-  unknownTokens: string[]
-  availableTokens: Token[]
-  sku: string
-  mpn: string
-  gtin: string
-  productType: string
-  price: string
-  imageUrl: string
-  url: string
-  matched: MatchState
-  benchmarkAmountMicros: string
-  benchmarkCurrency: string
-  checkedAt: string | null
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
 
-type WorkbenchResponse = {
-  items: WorkbenchItem[]
-  page: number
-  perPage: number
-  total: number
-  summary: {
-    total: number
-    matched: number
-    unmatched: number
-    unknown: number
-    overridden: number
-    lastCheckedAt: string | null
-    canRefresh: boolean
-  }
-  error?: string
-}
-
-const shell = { display: 'grid', gap: '1rem' } as const
-const toolbar = { display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' } as const
-const input = {
-  font: 'inherit',
-  fontSize: '0.875rem',
-  padding: '0.5rem 0.625rem',
-  border: '1px solid var(--color-border)',
-  borderRadius: 8,
-  background: 'var(--color-bg)',
-  color: 'var(--color-fg)',
-} as const
-const muted = { color: 'var(--color-text-muted)', fontSize: '0.8125rem' } as const
-
-function badge(state: MatchState) {
-  const colour = state === 'matched' ? 'var(--color-success, #257a3e)' : state === 'unmatched' ? 'var(--color-danger, #a33)' : 'var(--color-text-muted)'
-  return <span style={{ color: colour, fontWeight: 700, textTransform: 'capitalize' }}>{state}</span>
-}
-
-function moneyFromMicros(value: string, currency: string): string {
-  const number = Number(value)
-  if (!Number.isFinite(number)) return ''
-  return (number / 1_000_000).toLocaleString('en-GB', { style: 'currency', currency: currency || 'GBP' })
-}
-
-function tokenPreview(tokens: Token[]): string {
-  return tokens
-    .filter((t) => ['sku', 'parent_title', 'original_title', 'variant_label', 'colour', 'color', 'size', 'material', 'frame_colour', 'upholstery_colour', 'finish'].includes(t.token))
-    .slice(0, 12)
-    .map((t) => `<${t.token}>`)
-    .join(' ')
+function listParams(query: WorkbenchQuery): URLSearchParams {
+  return writeWorkbenchQuery(query, new URLSearchParams())
 }
 
 export function GoogleShoppingWorkbench() {
-  const [items, setItems] = useState<WorkbenchItem[]>([])
-  const [summary, setSummary] = useState<WorkbenchResponse['summary'] | null>(null)
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const [query, setQuery] = useState('')
-  const [match, setMatch] = useState('all')
-  const [override, setOverride] = useState('all')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const adminPath = useAdminPath()
+  const router = useRouter()
+  const list = useWorkbenchList()
+  const selection = useSelection(list.query)
+  const drafts = useTitleDrafts()
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const [savingIds, setSavingIds] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const [histories, setHistories] = useState<Record<string, HistoryState>>({})
   const [bulkTemplate, setBulkTemplate] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [pendingBulk, setPendingBulk] = useState<PendingBulk | null>(null)
+  const [changes, setChanges] = useState<ChangeEntry[] | null>(null)
+  const [changesError, setChangesError] = useState('')
+  const [undoingId, setUndoingId] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshRun, setRefreshRun] = useState(0)
+  const refreshSeconds = useElapsedSeconds(refreshing, refreshRun)
 
-  const perPage = 50
-  const selectedItems = useMemo(() => items.filter((item) => selected.has(item.id)), [items, selected])
+  const { pendingHref, setPendingHref } = useUnsavedChanges(() => drafts.count > 0)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const { data, summary, query } = list
+  const rows = data?.rows ?? []
+  const loading = list.phase === 'loading'
+  const catalogueItems = data?.catalogue.items ?? summary?.total ?? null
+
+  // ----- Recent changes ------------------------------------------------------
+  const loadChanges = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ page: String(page), perPage: String(perPage), match, override })
-      if (query.trim()) params.set('q', query.trim())
-      const res = await fetch(`${BASE}/items?${params}`)
-      const body = await res.json() as WorkbenchResponse
-      if (!res.ok) throw new Error(body.error ?? 'Could not load Google Shopping products')
-      setItems(body.items)
-      setSummary(body.summary)
-      setTotal(body.total)
-      setDrafts(Object.fromEntries(body.items.map((item) => [item.id, item.titleTemplate ?? ''])))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load Google Shopping products')
-    } finally {
-      setLoading(false)
+      const next = await fetchChanges()
+      setChanges(next)
+      setChangesError('')
+    } catch (error) {
+      setChangesError(messageOf(error, 'Could not load recent changes'))
     }
-  }, [match, override, page, query])
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      await Promise.resolve()
-      if (!cancelled) await load()
-    })()
-    return () => { cancelled = true }
-  }, [load])
+    void loadChanges()
+  }, [loadChanges])
 
-  async function saveUpdates(updates: Array<{ itemId: string; titleTemplate: string | null }>) {
-    setSaving(true)
-    setMessage('')
-    setError('')
+  // ----- "/" jumps to the search box, as it does on most big lists ----------
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return
+      event.preventDefault()
+      searchRef.current?.focus()
+      searchRef.current?.select()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  // ----- Filters -------------------------------------------------------------
+  const changeQuery = useCallback((patch: Partial<WorkbenchQuery>) => {
+    setNotice(null)
+    list.updateQuery(patch)
+  }, [list])
+
+  const showListing = useStableCallback((groupId: string) => changeQuery({ group: groupId }))
+
+  // ----- Row edits -----------------------------------------------------------
+  /** Saves the given edits (all of them when no ids), and says whether it worked. */
+  async function saveRows(ids?: string[]): Promise<boolean> {
+    const updates = drafts.updates(ids)
+    if (updates.length === 0) return true
+    const saving = updates.map((update) => update.itemId)
+    setSavingIds((previous) => new Set([...previous, ...saving]))
+    setNotice(null)
     try {
-      const res = await fetch(`${BASE}/items`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates }),
+      let changed = 0
+      let lastBatch: string | null = null
+      for (let start = 0; start < updates.length; start += SAVE_CHUNK) {
+        const outcome = await saveTemplates(updates.slice(start, start + SAVE_CHUNK))
+        changed += outcome.changed
+        lastBatch = outcome.batchId
+      }
+      drafts.discard(saving)
+      setNotice({
+        tone: 'ok',
+        text: changed === 0 ? 'Nothing had changed, so nothing was saved.' : `Saved ${plural(changed, 'title')}. Google picks ${changed === 1 ? 'it' : 'them'} up the next time it fetches the feed.`,
+        undoBatchId: updates.length <= SAVE_CHUNK ? lastBatch : null,
       })
-      const body = await res.json() as { error?: string }
-      if (!res.ok) throw new Error(body.error ?? 'Save failed')
-      setMessage(updates.length === 1 ? 'Saved title template.' : `Saved ${updates.length} title templates.`)
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      list.reload()
+      void loadChanges()
+      return true
+    } catch (error) {
+      setNotice({ tone: 'error', text: messageOf(error, 'Could not save the titles') })
+      return false
     } finally {
-      setSaving(false)
+      setSavingIds((previous) => {
+        const next = new Set(previous)
+        for (const id of saving) next.delete(id)
+        return next
+      })
     }
   }
 
-  async function refreshMatchStatus() {
-    setSaving(true)
-    setMessage('')
-    setError('')
+  const saveRow = useStableCallback((id: string) => void saveRows([id]))
+  const revertRow = useStableCallback((id: string) => drafts.discard([id]))
+
+  // ----- Match history -------------------------------------------------------
+  async function loadHistory(id: string) {
+    setHistories((previous) => ({ ...previous, [id]: { status: 'loading' } }))
     try {
-      const res = await fetch(`${BASE}/items/refresh`, { method: 'POST' })
-      const body = await res.json() as { products?: number; matched?: number; error?: string }
-      if (!res.ok) throw new Error(body.error ?? 'Refresh failed')
-      setMessage(`Refreshed ${body.products ?? 0} Merchant products; ${body.matched ?? 0} have a match snapshot.`)
-      await load()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Refresh failed')
-    } finally {
-      setSaving(false)
+      const entries = await fetchHistory(id)
+      setHistories((previous) => ({ ...previous, [id]: { status: 'ready', entries } }))
+    } catch (error) {
+      setHistories((previous) => ({ ...previous, [id]: { status: 'error', message: messageOf(error, 'Could not load match history') } }))
     }
   }
 
-  function toggle(id: string, checked: boolean) {
-    setSelected((current) => {
-      const next = new Set(current)
-      if (checked) next.add(id)
+  // Fetched the first time a row opens; reopening reuses what came back.
+  const toggleHistory = useStableCallback((id: string) => {
+    const opening = !expanded.has(id)
+    setExpanded((previous) => {
+      const next = new Set(previous)
+      if (opening) next.add(id)
       else next.delete(id)
       return next
     })
+    if (opening && !histories[id]) void loadHistory(id)
+  })
+  const retryHistory = useStableCallback((id: string) => void loadHistory(id))
+
+  // ----- Bulk changes --------------------------------------------------------
+  async function startBulk(action: BulkAction) {
+    const scope = selection.scope
+    if (!scope) return
+    setBulkBusy(true)
+    setNotice(null)
+    try {
+      const outcome = await runBulk(scope, action, true)
+      setPendingBulk({ action, scope, outcome })
+    } catch (error) {
+      setNotice({ tone: 'error', text: messageOf(error, 'Could not check that change') })
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
-  function selectVisible(checked: boolean) {
-    setSelected((current) => {
-      const next = new Set(current)
-      for (const item of items) {
-        if (checked) next.add(item.id)
-        else next.delete(item.id)
-      }
-      return next
-    })
+  async function confirmBulk() {
+    if (!pendingBulk) return
+    setBulkBusy(true)
+    try {
+      const result = await runBulk(pendingBulk.scope, pendingBulk.action, false)
+      const changed = result.changed ?? 0
+      setPendingBulk(null)
+      selection.clear()
+      setBulkTemplate('')
+      setNotice({
+        tone: 'ok',
+        text: `Changed ${plural(changed, 'title')}. Google picks them up the next time it fetches the feed.`,
+        undoBatchId: result.batchId ?? null,
+      })
+      list.reload()
+      void loadChanges()
+    } catch (error) {
+      setPendingBulk(null)
+      setNotice({ tone: 'error', text: messageOf(error, 'Could not change the titles') })
+      list.reload()
+    } finally {
+      setBulkBusy(false)
+    }
   }
+
+  // ----- Undo ----------------------------------------------------------------
+  async function undo(batchId: string) {
+    setUndoingId(batchId)
+    setNotice(null)
+    try {
+      const result = await undoChange(batchId)
+      const left = result.skipped > 0
+        ? ` ${plural(result.skipped, 'title')} had been edited since, so ${result.skipped === 1 ? 'it was' : 'they were'} left as ${result.skipped === 1 ? 'it is' : 'they are'}.`
+        : ''
+      setNotice({ tone: 'ok', text: `Put back ${plural(result.restored, 'title')}.${left}`, undoBatchId: result.batchId })
+      list.reload()
+      void loadChanges()
+    } catch (error) {
+      setNotice({ tone: 'error', text: messageOf(error, 'Could not undo that change') })
+    } finally {
+      setUndoingId(null)
+    }
+  }
+
+  // ----- Google match refresh ------------------------------------------------
+  async function refreshMatches() {
+    setRefreshing(true)
+    setRefreshRun((run) => run + 1)
+    setNotice({ tone: 'info', text: 'Asking Google about every item in the feed. On a big catalogue that can take up to a minute.' })
+    try {
+      const result = await refreshMatchStatus()
+      setNotice({ tone: 'ok', text: `Google reported on ${plural(result.products, 'item')}; ${formatCount(result.matched)} are matched to other sellers.` })
+      setHistories({})
+      setExpanded(new Set())
+      list.reload()
+    } catch (error) {
+      setNotice({ tone: 'error', text: messageOf(error, 'Could not refresh match status') })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // ----- Leaving with unsaved edits -----------------------------------------
+  function leave(href: string) {
+    setPendingHref(null)
+    router.push(href)
+  }
+
+  const pageIds = rows.map((row) => row.id)
+  const pageSelectedCount = rows.filter((row) => selection.isSelected(row.id)).length
+  const allOnPageSelected = rows.length > 0 && pageSelectedCount === rows.length
+  const listingTitle = query.group !== '' ? rows.find((row) => row.groupId === query.group || row.id === query.group)?.parentTitle ?? null : null
+  const filtered = isFilteredQuery(query)
 
   return (
-    <div style={shell}>
-      <div>
-        <h2 style={{ margin: '0 0 0.25rem' }}>Google Shopping</h2>
-        <p style={{ ...muted, margin: 0 }}>
-          Feed items, Google match snapshots and feed-only title templates. Website product names and option labels are left alone.
-        </p>
-      </div>
+    <div className="gsw">
+      <style dangerouslySetInnerHTML={{ __html: workbenchCss }} />
 
-      {summary && (
-        <div style={{ ...toolbar, ...muted }}>
-          <strong>{summary.total.toLocaleString()} feed items</strong>
-          <span>{summary.matched.toLocaleString()} matched</span>
-          <span>{summary.unmatched.toLocaleString()} unmatched</span>
-          <span>{summary.unknown.toLocaleString()} unknown</span>
-          <span>{summary.overridden.toLocaleString()} overrides</span>
-          {summary.lastCheckedAt && <span>Checked {new Date(summary.lastCheckedAt).toLocaleString()}</span>}
+      <header className="gsw-head">
+        <div>
+          <h2 className="gsw-title">Google Shopping</h2>
+          <p className="gsw-lede">
+            Every item in the Google feed, whether Google has matched it to other sellers, how its price compares, and the title Google is sent.
+            Titles set here are for Google only - product names on the site are left alone.
+          </p>
         </div>
+        <div className="gsw-head-actions">
+          <a className="btn btn-secondary btn-sm" href={exportHref(listParams(query))} download>
+            Download {data && data.total !== data.catalogue.items ? `these ${formatCount(data.total)}` : 'all'} as CSV
+          </a>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={loading} onClick={() => list.reload({ reread: true })}>
+            Re-read the shop
+          </button>
+          {data?.canRefresh && (
+            <button type="button" className="btn btn-primary btn-sm" disabled={refreshing} onClick={() => void refreshMatches()}>
+              {refreshing ? <><span className="gsw-spinner" aria-hidden /> Asking Google… {refreshSeconds ?? 0}s</> : 'Check matches with Google'}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {data && (
+        <p className="gsw-muted gsw-small" style={{ margin: 0 }}>
+          Shop read {agoFromSeconds(data.catalogue.ageSeconds)}{data.catalogue.stale ? ' - reading it again in the background' : ''}
+          {' · '}Google last reported {summary?.lastCheckedAt ? formatDateTime(summary.lastCheckedAt) : 'never'}
+          {data.catalogue.withheld > 0 && <> · {plural(data.catalogue.withheld, 'product')} held back from Google for having no photo</>}
+        </p>
       )}
 
-      <div style={toolbar}>
-        <input
-          value={query}
-          placeholder="Search title, SKU, MPN or GTIN"
-          onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-          style={{ ...input, width: 320 }}
+      <SummaryPanel summary={summary} query={query} onChange={changeQuery} />
+
+      <FilterBar
+        query={query}
+        summary={summary}
+        searchInput={list.searchInput}
+        onSearchInput={list.setSearchInput}
+        onSearchSubmit={list.applySearchNow}
+        searching={list.searchPending || (loading && list.activity === 'search')}
+        searchRef={searchRef}
+        onChange={changeQuery}
+        onReset={list.resetFilters}
+        listingTitle={listingTitle}
+      />
+
+      {notice && (
+        <p className={`gsw-message is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>
+          <span>{notice.text}</span>
+          {notice.undoBatchId && (
+            <button type="button" className="btn btn-secondary btn-sm" disabled={undoingId !== null} onClick={() => void undo(notice.undoBatchId ?? '')}>Undo</button>
+          )}
+          <button type="button" className="gsw-search-clear" aria-label="Dismiss" onClick={() => setNotice(null)}>×</button>
+        </p>
+      )}
+
+      {drafts.count > 0 && (
+        <section className="gsw-bar is-unsaved" aria-label="Unsaved edits">
+          <div className="gsw-bar-row">
+            <span className="gsw-bar-count">{plural(drafts.count, 'unsaved title edit')}</span>
+            <span className="gsw-muted gsw-small">Kept while you page and search, until you save or discard them.</span>
+            <span className="gsw-spacer" />
+            <button type="button" className="btn btn-ghost btn-sm" disabled={savingIds.size > 0} onClick={drafts.discardAll}>Discard all</button>
+            <button type="button" className="btn btn-primary btn-sm" disabled={savingIds.size > 0} onClick={() => void saveRows()}>
+              {savingIds.size > 0 ? <><span className="gsw-spinner" aria-hidden /> Saving…</> : `Save all ${formatCount(drafts.count)}`}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <BulkBar
+        selection={selection}
+        pageRows={rows}
+        matchingTotal={data?.total ?? 0}
+        template={bulkTemplate}
+        onTemplateChange={setBulkTemplate}
+        busy={bulkBusy}
+        onSetTemplate={() => void startBulk({ kind: 'set-template', template: bulkTemplate.trim() })}
+        onClearTemplates={() => void startBulk({ kind: 'clear-template' })}
+      />
+
+      {list.phase === 'error' && (
+        <p className="gsw-message is-error" role="alert">
+          <span>{list.error}</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => list.reload()}>Try again</button>
+        </p>
+      )}
+
+      <div className="gsw-card">
+        <StatusLine
+          phase={list.phase}
+          activity={list.activity}
+          searchPending={list.searchPending}
+          elapsedSeconds={list.elapsedSeconds}
+          catalogueItems={catalogueItems}
+          targetPage={query.page}
+          result={data ? { total: data.total, page: data.page, pageCount: data.pageCount, serverMs: data.serverMs } : null}
+          filtered={filtered}
         />
-        <select value={match} onChange={(e) => { setMatch(e.target.value); setPage(1) }} style={input}>
-          <option value="all">All match states</option>
-          <option value="matched">Matched</option>
-          <option value="unmatched">Unmatched</option>
-          <option value="unknown">Unknown</option>
-        </select>
-        <select value={override} onChange={(e) => { setOverride(e.target.value); setPage(1) }} style={input}>
-          <option value="all">All titles</option>
-          <option value="overridden">With override</option>
-          <option value="plain">No override</option>
-        </select>
-        <button type="button" className="btn" disabled={loading} onClick={() => void load()}>Reload</button>
-        {summary?.canRefresh && (
-          <button type="button" className="btn" disabled={saving} onClick={() => void refreshMatchStatus()}>
-            Refresh match status
-          </button>
+        <div className="gsw-scroll">
+          <table className="gsw-table" aria-busy={loading}>
+            <thead>
+              <tr>
+                <th className="gsw-check" scope="col">
+                  <input
+                    type="checkbox"
+                    aria-label="Select every item on this page"
+                    checked={allOnPageSelected}
+                    disabled={rows.length === 0 || selection.isWholeQuery}
+                    ref={(element) => {
+                      if (element) element.indeterminate = pageSelectedCount > 0 && !allOnPageSelected
+                    }}
+                    onChange={(event) => selection.setMany(pageIds, event.target.checked)}
+                  />
+                </th>
+                <th scope="col" className="gsw-col-product">Product</th>
+                <th scope="col" className="gsw-col-google">On Google</th>
+                <th scope="col">Title sent to Google</th>
+              </tr>
+            </thead>
+            <tbody className={`gsw-tbody${loading && data ? ' is-busy' : ''}`}>
+              {!data && list.phase !== 'error' && Array.from({ length: SKELETON_ROWS }, (_unused, index) => (
+                <tr key={`skeleton-${index}`} aria-hidden>
+                  <td className="gsw-check" />
+                  <td><div className="gsw-product"><span className="skeleton gsw-thumb" style={{ display: 'block' }} /><span className="skeleton" style={{ display: 'block', width: '80%', height: '1rem' }} /></div></td>
+                  <td><span className="skeleton" style={{ display: 'block', width: '60%', height: '1rem' }} /></td>
+                  <td><span className="skeleton" style={{ display: 'block', width: '100%', height: '3rem' }} /></td>
+                </tr>
+              ))}
+              {rows.map((row) => (
+                <ItemRow
+                  key={row.id}
+                  row={row}
+                  adminPath={adminPath}
+                  selected={selection.isSelected(row.id)}
+                  selectionLocked={selection.isWholeQuery}
+                  onSelect={selection.toggle}
+                  draft={drafts.valueFor(row.id, row.titleTemplate)}
+                  dirty={drafts.isDirty(row.id)}
+                  saving={savingIds.has(row.id)}
+                  onDraftChange={drafts.set}
+                  onSave={saveRow}
+                  onRevert={revertRow}
+                  historyOpen={expanded.has(row.id)}
+                  history={histories[row.id]}
+                  onToggleHistory={toggleHistory}
+                  onRetryHistory={retryHistory}
+                  listingShown={query.group !== ''}
+                  onShowListing={showListing}
+                />
+              ))}
+              {data && rows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="gsw-empty">
+                    {filtered ? (
+                      <>
+                        <strong>Nothing matches.</strong>
+                        Try fewer words, or <button type="button" className="gsw-linkish" onClick={list.resetFilters}>clear the filters</button>.
+                      </>
+                    ) : (
+                      <>
+                        <strong>Nothing in the Google feed yet.</strong>
+                        Products go to Google once they are active, visible in the shop and have a photo.
+                      </>
+                    )}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {data && (
+          <Pager
+            page={data.page}
+            pageCount={data.pageCount}
+            total={data.total}
+            perPage={data.perPage}
+            disabled={loading}
+            onPage={(page) => changeQuery({ page })}
+          />
         )}
       </div>
 
-      <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.75rem', display: 'grid', gap: '0.75rem' }}>
-        <div style={toolbar}>
-          <strong>{selected.size.toLocaleString()} selected</strong>
-          <button type="button" className="btn" disabled={items.length === 0} onClick={() => selectVisible(true)}>Select visible</button>
-          <button type="button" className="btn" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>Clear selection</button>
-        </div>
-        <textarea
-          value={bulkTemplate}
-          onChange={(e) => setBulkTemplate(e.target.value)}
-          placeholder="Bulk template, e.g. ISO Stacking Chair <upholstery_colour> Fabric <frame_colour> Frame <sku>"
-          rows={2}
-          style={{ ...input, width: '100%', resize: 'vertical' }}
+      <RecentChanges
+        changes={changes}
+        error={changesError}
+        undoingId={undoingId}
+        onUndo={(change) => void undo(change.id)}
+        onRetry={() => void loadChanges()}
+      />
+
+      {pendingBulk && (
+        <BulkConfirmDialog
+          action={pendingBulk.action}
+          outcome={pendingBulk.outcome}
+          busy={bulkBusy}
+          onConfirm={() => void confirmBulk()}
+          onCancel={() => setPendingBulk(null)}
         />
-        <div style={toolbar}>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={saving || selected.size === 0}
-            onClick={() => void saveUpdates([...selected].map((itemId) => ({ itemId, titleTemplate: bulkTemplate || null })))}
-          >
-            Apply to selected
-          </button>
-          {selectedItems[0] && <span style={muted}>Tokens on first selected row: {tokenPreview(selectedItems[0].availableTokens)}</span>}
-        </div>
-      </div>
+      )}
 
-      {message && <p style={{ color: 'var(--color-success, var(--color-text))', margin: 0 }}>{message}</p>}
-      {error && <p role="alert" style={{ color: 'var(--color-danger)', margin: 0 }}>{error}</p>}
-
-      <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1180 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', background: 'var(--color-surface)' }}>
-              <th style={{ padding: '0.625rem' }}><input type="checkbox" checked={items.length > 0 && items.every((item) => selected.has(item.id))} onChange={(e) => selectVisible(e.target.checked)} /></th>
-              <th style={{ padding: '0.625rem' }}>Product</th>
-              <th style={{ padding: '0.625rem' }}>Match</th>
-              <th style={{ padding: '0.625rem' }}>Codes</th>
-              <th style={{ padding: '0.625rem' }}>Title override</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id} style={{ borderTop: '1px solid var(--color-border)', verticalAlign: 'top' }}>
-                <td style={{ padding: '0.625rem' }}>
-                  <input type="checkbox" checked={selected.has(item.id)} onChange={(e) => toggle(item.id, e.target.checked)} />
-                </td>
-                <td style={{ padding: '0.625rem', width: 430 }}>
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element -- feed images are external Merchant Center inputs */}
-                    {item.imageUrl && <img src={item.imageUrl} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--color-border)' }} />}
-                    <div>
-                      <a href={item.url} target="_blank" rel="noreferrer" style={{ fontWeight: 700 }}>{item.originalTitle}</a>
-                      <div style={{ ...muted, marginTop: '0.25rem' }}>Google title: {item.renderedTitle}</div>
-                      {item.unknownTokens.length > 0 && <div style={{ color: 'var(--color-danger)', fontSize: '0.8125rem' }}>Unknown token: {item.unknownTokens.join(', ')}</div>}
-                    </div>
-                  </div>
-                </td>
-                <td style={{ padding: '0.625rem', width: 130 }}>
-                  {badge(item.matched)}
-                  {item.benchmarkAmountMicros && <div style={muted}>Benchmark {moneyFromMicros(item.benchmarkAmountMicros, item.benchmarkCurrency)}</div>}
-                </td>
-                <td style={{ padding: '0.625rem', width: 190, ...muted }}>
-                  <div>SKU {item.sku || 'n/a'}</div>
-                  <div>MPN {item.mpn || 'n/a'}</div>
-                  <div>GTIN {item.gtin || 'n/a'}</div>
-                </td>
-                <td style={{ padding: '0.625rem', minWidth: 360 }}>
-                  <textarea
-                    value={drafts[item.id] ?? ''}
-                    onChange={(e) => setDrafts((current) => ({ ...current, [item.id]: e.target.value }))}
-                    rows={2}
-                    style={{ ...input, width: '100%', resize: 'vertical' }}
-                    placeholder="Blank uses the normal feed title"
-                  />
-                  <div style={{ ...toolbar, marginTop: '0.4rem' }}>
-                    <button type="button" className="btn" disabled={saving} onClick={() => void saveUpdates([{ itemId: item.id, titleTemplate: drafts[item.id] || null }])}>
-                      Save
-                    </button>
-                    <span style={muted}>{tokenPreview(item.availableTokens)}</span>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div style={{ ...toolbar, justifyContent: 'space-between' }}>
-        <span style={muted}>{total.toLocaleString()} matching rows</span>
-        <div style={toolbar}>
-          <button type="button" className="btn" disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</button>
-          <span style={muted}>Page {page}</span>
-          <button type="button" className="btn" disabled={page * perPage >= total || loading} onClick={() => setPage((p) => p + 1)}>Next</button>
-        </div>
-      </div>
+      <UnsavedChangesModal
+        pendingHref={pendingHref}
+        saving={savingIds.size > 0}
+        message={`${plural(drafts.count, 'title edit')} on the Google Shopping list ${drafts.count === 1 ? 'is' : 'are'} not saved yet. Save before you go?`}
+        onCancel={() => setPendingHref(null)}
+        onDiscard={() => {
+          drafts.discardAll()
+          if (pendingHref) leave(pendingHref)
+        }}
+        onSave={() => {
+          const href = pendingHref
+          // Only leave once the edits are safely saved; a failed save stays put
+          // with its error showing, edits intact.
+          void saveRows().then((saved) => {
+            if (saved && href) leave(href)
+            else setPendingHref(null)
+          })
+        }}
+      />
     </div>
   )
 }

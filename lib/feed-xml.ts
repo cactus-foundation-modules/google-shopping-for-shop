@@ -3,6 +3,8 @@
 // fixtures. Attribute reference: Google Merchant Center product data
 // specification (support.google.com/merchants/answer/7052112).
 
+import { GOOGLE_TITLE_MAX } from '@/modules/google-shopping-for-shop/lib/title-template-render'
+
 export type FeedAvailability = 'in_stock' | 'out_of_stock' | 'preorder' | 'backorder'
 
 // One option on one variant, as a plain name/value pair: { name: "Finish",
@@ -108,7 +110,8 @@ export type FeedChannel = {
   description: string
 }
 
-const TITLE_MAX = 150
+// Shared with the admin workbench, which warns when a title runs past it.
+const TITLE_MAX = GOOGLE_TITLE_MAX
 const DESCRIPTION_MAX = 5000
 const SHIPPING_LABEL_MAX = 100
 
@@ -121,7 +124,9 @@ function escapeXml(s: string): string {
     .replace(/'/g, '&apos;')
 }
 
-function clip(value: string, max: number): string {
+/** Trims to `max` characters, back to a word boundary when one is near. The
+ *  workbench uses it too, to know what Google will hold for a long title. */
+export function clip(value: string, max: number): string {
   const trimmed = value.trim()
   if (trimmed.length <= max) return trimmed
   // Cut on a word where one is near, so a clipped title does not end mid-word.

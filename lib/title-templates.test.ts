@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTitleTemplateContext, normaliseTitleToken, renderTitleTemplate } from '@/modules/google-shopping-for-shop/lib/title-templates'
+import { buildTitleTemplateContext, normaliseTitleToken, renderTitleTemplate } from '@/modules/google-shopping-for-shop/lib/title-template-render'
 
 describe('Google Shopping title templates', () => {
   it('normalises token names the way an owner will type them', () => {

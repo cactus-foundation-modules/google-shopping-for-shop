@@ -155,21 +155,41 @@ export async function refreshMerchantMatchStatus(): Promise<MatchRefreshResult> 
     const offerId = view?.offerId?.trim()
     if (!offerId) continue
     const benchmark = benchmarkByOffer.get(offerId)
+    // Casts because a VALUES list inside a CTE has no target column to borrow
+    // its types from.
     values.push(Prisma.sql`(
-      ${offerId},
-      ${benchmark !== undefined},
-      ${benchmark?.title ?? view?.title?.trim() ?? null},
-      ${benchmark?.amount ?? null},
-      ${benchmark?.currency ?? null},
-      ${checkedAt}
+      ${offerId}::text,
+      ${benchmark !== undefined}::boolean,
+      ${benchmark?.title ?? view?.title?.trim() ?? null}::text,
+      ${benchmark?.amount ?? null}::bigint,
+      ${benchmark?.currency ?? null}::text,
+      ${checkedAt}::timestamp(3)
     )`)
   }
 
+  // One statement per batch: the history insert reads the snapshot as it stood
+  // before the upsert (data-modifying CTEs share one snapshot), so it logs an
+  // item exactly when its match state or the title Google holds has changed.
+  // Benchmark prices drift daily and are carried along, never a trigger.
   for (let i = 0; i < values.length; i += 500) {
     await prisma.$executeRaw`
+      WITH "incoming" ("item_id", "matched", "merchant_title", "benchmark_amount_micros", "benchmark_currency", "checked_at") AS (
+        VALUES ${Prisma.join(values.slice(i, i + 500))}
+      ),
+      "logged" AS (
+        INSERT INTO "gsf_item_match_history"
+          ("item_id", "matched", "merchant_title", "benchmark_amount_micros", "benchmark_currency", "recorded_at")
+        SELECT n."item_id", n."matched", n."merchant_title", n."benchmark_amount_micros", n."benchmark_currency", n."checked_at"
+        FROM "incoming" n
+        LEFT JOIN "gsf_item_match_status" s ON s."item_id" = n."item_id"
+        WHERE s."item_id" IS NULL
+           OR s."matched" IS DISTINCT FROM n."matched"
+           OR s."merchant_title" IS DISTINCT FROM n."merchant_title"
+      )
       INSERT INTO "gsf_item_match_status"
         ("item_id", "matched", "merchant_title", "benchmark_amount_micros", "benchmark_currency", "checked_at")
-      VALUES ${Prisma.join(values.slice(i, i + 500))}
+      SELECT "item_id", "matched", "merchant_title", "benchmark_amount_micros", "benchmark_currency", "checked_at"
+      FROM "incoming"
       ON CONFLICT ("item_id") DO UPDATE SET
         "matched" = EXCLUDED."matched",
         "merchant_title" = EXCLUDED."merchant_title",

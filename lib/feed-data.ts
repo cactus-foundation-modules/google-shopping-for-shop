@@ -34,7 +34,8 @@ import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem,
 import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
 import { partitionPublishable } from '@/modules/google-shopping-for-shop/lib/withholding'
 import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
-import { buildTitleTemplateContext, getTitleTemplatesForItems, renderTitleTemplate } from '@/modules/google-shopping-for-shop/lib/title-templates'
+import { getTitleTemplatesForItems } from '@/modules/google-shopping-for-shop/lib/title-templates'
+import { buildTitleTemplateContext, renderTitleTemplate, type TitleTemplateContext } from '@/modules/google-shopping-for-shop/lib/title-template-render'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
 import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
@@ -129,7 +130,19 @@ function descriptionOf(parent: { meta_description?: string | null; short_descrip
  *  dropped product is a support ticket six weeks later. */
 export type FeedWithheldItem = { id: string; title: string; reason: 'no-image' }
 
-export type FeedData = { items: FeedItem[]; promotions: FeedPromotion[]; withheld: FeedWithheldItem[] }
+/** What an item's feed title was made from: the title it would carry with no
+ *  template, and the tokens a template can use. Handed back so the admin
+ *  workbench previews a template against exactly what the feed fills it from,
+ *  rather than rebuilding the same answer from the tables and drifting. */
+export type FeedTitleSource = { originalTitle: string; parentTitle: string; context: TitleTemplateContext }
+
+export type FeedData = {
+  items: FeedItem[]
+  promotions: FeedPromotion[]
+  withheld: FeedWithheldItem[]
+  /** Keyed by item id; one entry per item built, withheld ones included. */
+  titleSources: Map<string, FeedTitleSource>
+}
 
 export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const [config, settings] = await Promise.all([getShopConfigCached(), getGsfSettings()])
@@ -280,6 +293,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const returnLabels = settings.returnPolicyLabelsEnabled
 
   const items: FeedItem[] = []
+  const titleSources = new Map<string, FeedTitleSource>()
   // The tax class each finished item was priced under, so the delivery pass at
   // the bottom can gross up a service charge exactly as the item's own price was
   // grossed - the charge is folded into the line and taxed at the product's rate.
@@ -382,20 +396,18 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         { standalone: false, mpnFromSku: settings.mpnFromSku },
       )
       const originalTitle = variant.label ? `${parent.name} - ${variant.label}` : parent.name
-      const title = renderTitleTemplate(
-        titleTemplates.get(variant.childProductId),
-        buildTitleTemplateContext({
-          originalTitle,
-          parentTitle: parent.name,
-          variantLabel: variant.label,
-          sku: child.sku,
-          mpn: identifiers.mpn,
-          gtin: identifiers.gtin,
-          brand: identifiers.brand,
-          options: pairs,
-        }),
+      const titleContext = buildTitleTemplateContext({
         originalTitle,
-      ).title
+        parentTitle: parent.name,
+        variantLabel: variant.label,
+        sku: child.sku,
+        mpn: identifiers.mpn,
+        gtin: identifiers.gtin,
+        brand: identifiers.brand,
+        options: pairs,
+      })
+      titleSources.set(variant.childProductId, { originalTitle, parentTitle: parent.name, context: titleContext })
+      const title = renderTitleTemplate(titleTemplates.get(variant.childProductId), titleContext, originalTitle).title
 
       items.push({
         id: variant.childProductId,
@@ -460,19 +472,17 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       { barcode: product.barcode, sku: product.sku },
       { standalone: true, mpnFromSku: settings.mpnFromSku },
     )
-    const title = renderTitleTemplate(
-      titleTemplates.get(product.id),
-      buildTitleTemplateContext({
-        originalTitle: product.name,
-        parentTitle: product.name,
-        sku: product.sku,
-        mpn: identifiers.mpn,
-        gtin: identifiers.gtin,
-        brand: identifiers.brand,
-        options: [],
-      }),
-      product.name,
-    ).title
+    const titleContext = buildTitleTemplateContext({
+      originalTitle: product.name,
+      parentTitle: product.name,
+      sku: product.sku,
+      mpn: identifiers.mpn,
+      gtin: identifiers.gtin,
+      brand: identifiers.brand,
+      options: [],
+    })
+    titleSources.set(product.id, { originalTitle: product.name, parentTitle: product.name, context: titleContext })
+    const title = renderTitleTemplate(titleTemplates.get(product.id), titleContext, product.name).title
 
     items.push({
       id: product.id,
@@ -658,5 +668,5 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     }
   }
 
-  return { items, promotions, withheld }
+  return { items, promotions, withheld, titleSources }
 }
