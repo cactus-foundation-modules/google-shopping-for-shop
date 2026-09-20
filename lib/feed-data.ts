@@ -15,7 +15,7 @@ import { listProducts, getProductMediaForProducts, HARD_MAX_PER_PAGE } from '@/m
 import { listCategories } from '@/modules/shop/lib/db/catalogue'
 import { getDefaultTaxZoneId, listTaxZoneRates } from '@/modules/shop/lib/db/tax-shipping'
 import { displayAmount, type PriceDisplay } from '@/modules/shop/lib/tax-display-shared'
-import { isOnSale } from '@/modules/shop/lib/pricing'
+import { effectivePrice, isOnSale } from '@/modules/shop/lib/pricing'
 import { hidesOutOfStockFromShoppers, outOfStockSql } from '@/modules/shop/lib/stock-visibility'
 import { deductionAmount } from '@/modules/shop/lib/order-size-deduction'
 import { getDeductionRules } from '@/modules/shop/lib/db/suppliers'
@@ -311,11 +311,13 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   //     product IS the child);
   //   - a stamped amount that survives deductionAmount (null, zero and
   //     negatives are all "no amount");
-  //   - the item actually on offer, which is where the money comes from;
   //   - and the amount strictly under what the item is charged, since the rule
   //     floors a line at zero rather than going negative. Such a row would
   //     advertise more than ever comes off, and shop's own report already flags
   //     it as a mis-stamp.
+  // Being on offer is NOT one of the tests, and has not been since shop stopped
+  // asking: an amount may sit inside an item's ordinary price just as well as
+  // inside a sale one, and the price passed below is whichever the shop charges.
   // Empty on every shop not running the feature, and it costs nothing to be.
   type OsdCandidate = { itemId: string; supplier: string; storedDeduction: number; taxClassId: string | null }
   const osdCandidates: OsdCandidate[] = []
@@ -325,10 +327,9 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     supplier: string | null | undefined,
     stored: number | string | null | undefined,
     chargedUnitPrice: number | null,
-    onSale: boolean,
     taxClassId: string | null,
   ): void => {
-    if (!promotionsWanted || !onSale) return
+    if (!promotionsWanted) return
     const name = supplier?.trim()
     if (!name) return
     const amount = deductionAmount(stored)
@@ -452,8 +453,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         // The child's own supplier and nothing behind it - see the note above.
         child.supplier,
         child.order_size_deduction as number | string | null,
-        onSale && variant.salePrice != null ? Number(variant.salePrice) : null,
-        onSale,
+        effectivePrice(priced, config.enabledPriceTypes),
         taxClassId,
       )
     }
@@ -515,8 +515,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       product.id,
       product.supplier,
       product.orderSizeDeduction,
-      onSale && product.salePrice != null ? Number(product.salePrice) : null,
-      onSale,
+      effectivePrice(product, config.enabledPriceTypes),
       product.taxClassId,
     )
   }
