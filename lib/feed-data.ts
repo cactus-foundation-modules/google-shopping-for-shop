@@ -171,7 +171,8 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
 
   // ----- Variant-bearing parents ---------------------------------------------
   // Every product shop-variations knows about, narrowed to the ones a shopper
-  // can see: ACTIVE, not themselves hidden, physical, and - when the shop hides
+  // can see: ACTIVE, not themselves hidden, not a spare part (shop 404s their
+  // pages, so a feed entry would be a dead link), physical, and - when the shop hides
   // sold-out products - not out of stock (the same test the sitemap applies,
   // which for a variant parent asks whether every child is out of stock).
   const variationParentIds = await getProductIdsWithVariations()
@@ -184,7 +185,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
              p."returnable", p."non_returnable_note"
       FROM "shp_products" p
       WHERE p."id" IN (${Prisma.join(variationParentIds)})
-        AND p."status" = 'ACTIVE' AND p."catalogue_hidden" = false AND p."type" = 'PHYSICAL'
+        AND p."status" = 'ACTIVE' AND p."catalogue_hidden" = false AND p."parts_only" = false AND p."type" = 'PHYSICAL'
         ${stockFilter}
     `
   }
