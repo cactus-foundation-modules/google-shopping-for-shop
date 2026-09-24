@@ -15,6 +15,7 @@
 //     overlap between groups - so two different groups may never end up with
 //     the same name.
 import { fitShippingLabel } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { shortHash } from '@/modules/google-shopping-for-shop/lib/delivery/short-hash'
 import type { DeliveryScope, DeliveryScopeKind } from '@/modules/google-shopping-for-shop/lib/delivery/catalogue'
 
 /** What each kind of group is called when two of them want the same name.
@@ -24,18 +25,6 @@ const KIND_SUFFIX: Record<DeliveryScopeKind, string> = {
   CATEGORY: 'category',
   SUPPLIER: 'supplier',
   DEFAULT: 'everything else',
-}
-
-/** A short, stable fingerprint of a scope id, for the rare case where even the
- *  kind-qualified name is taken. Deterministic, so the label does not move
- *  between one feed build and the next. */
-function fingerprint(scopeId: string): string {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < scopeId.length; index++) {
-    hash ^= scopeId.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return hash.toString(36).slice(0, 6)
 }
 
 export type DeliveryLabelMap = {
@@ -83,10 +72,10 @@ export function assignDeliveryLabels(scopes: DeliveryScope[]): DeliveryLabelMap 
       continue
     }
 
-    const byId = fitShippingLabel(`${scope.label} (${KIND_SUFFIX[scope.kind]} ${fingerprint(scope.id)})`)
+    const byId = fitShippingLabel(`${scope.label} (${KIND_SUFFIX[scope.kind]} ${shortHash(scope.id)})`)
     // fitShippingLabel only returns nothing for an empty string, and this one
     // never is - but the type says it can, and a label is not worth a throw.
-    const used = byId ?? fingerprint(scope.id)
+    const used = byId ?? shortHash(scope.id)
     taken.add(used)
     byScopeId.set(scope.id, used)
     qualified.push({ scopeId: scope.id, wanted, used })

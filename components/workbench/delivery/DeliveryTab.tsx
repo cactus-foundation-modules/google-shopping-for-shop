@@ -176,6 +176,11 @@ export function DeliveryTab() {
               + 'confirm what it now holds. The comparison below is what Merchant Center actually has.',
           })
         }
+      } else if (outcome.status === 'refused') {
+        // Our sentence first, Google's own words after it. Both, always: ours
+        // is a reading of theirs, and an owner who has to forward this to
+        // whoever set the account up needs the original rather than our gloss.
+        setNotice({ tone: 'error', text: outcome.detail ? `${outcome.message} Google's own words: ${outcome.detail}` : outcome.message })
       } else {
         setNotice({ tone: outcome.status === 'conflict' || outcome.status === 'stale' ? 'error' : 'info', text: outcome.message })
       }

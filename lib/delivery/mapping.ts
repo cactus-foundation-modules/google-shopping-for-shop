@@ -25,6 +25,7 @@
 import {
   MAX_LABELS_PER_RATE_GROUP,
   MAX_RATE_GROUPS_PER_SERVICE,
+  MAX_SERVICE_NAME_LENGTH,
   MAX_SERVICES_PER_COUNTRY,
   businessDays,
   splitCutoff,
@@ -32,6 +33,10 @@ import {
   type MerchantRateGroup,
   type MerchantService,
 } from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
+import {
+  assignServiceNames,
+  type ServiceNameRequest,
+} from '@/modules/google-shopping-for-shop/lib/delivery/service-names'
 import type {
   DeliveryCatalogue,
   DeliveryScope,
@@ -64,7 +69,13 @@ export type MappedRateGroup = {
 }
 
 export type MappedService = {
+  /** The site delivery service this came from. NOT unique across the list: a
+   *  service that delivers at several speeds becomes several of these, all
+   *  carrying the same key under different names. */
   serviceKey: string
+  /** What Merchant Center calls it. Unique across the payload, within Google's
+   *  50 characters, and built in exactly one place - see
+   *  lib/delivery/service-names.ts. */
   serviceName: string
   handlingDays: number
   transitDays: number
@@ -103,6 +114,17 @@ export type MappingInput = {
   /** Whether the feed also sends each item its OWN shipping prices. Google lets
    *  the per-item figure win, so the two features quietly cancel out. */
   perItemShippingOn: boolean
+  /** How many shipping services Merchant Center already holds for this country
+   *  that this site does NOT manage. Every push copies them back untouched, so
+   *  they count towards Google's cap of twenty per country just as ours do.
+   *
+   *  Optional, and zero where it has never been asked: a shop that has not
+   *  compared yet genuinely does not know. That is why the send counts the real
+   *  payload again against a fresh read before it goes - the number here decides
+   *  how much splitting to attempt, and the send decides whether it may go at
+   *  all. Both read it from the same saved comparison, so the preview and the
+   *  send never disagree about what would be sent. */
+  unmanagedServiceCount?: number
 }
 
 /**
@@ -244,8 +266,138 @@ function unexpressibleGroups(
   return trouble
 }
 
-function mapOneService(service: DeliveryServiceEntry, input: MappingInput): {
-  mapped: MappedService | null
+
+// ---------------------------------------------------------------------------
+// One site service, at however many speeds it delivers at
+// ---------------------------------------------------------------------------
+//
+// Merchant Center holds ONE delivery time per service, and this site can vary
+// it per group. That used to be settled by sending the slowest and warning
+// about it - which meant a service with twenty-five groups at five days and
+// one at fourteen quoted the whole lot at fourteen. The outliers were not a
+// mistake to be fixed by the owner; they were honest variety, flattened into
+// its worst case and then reported as fine.
+//
+// So a service that delivers at several speeds goes as several services, one
+// per speed, each carrying only the rate groups that really deliver at it.
+// Google's own limit on services per country is the one thing that can force
+// the old behaviour back, and mapDeliveryCatalogue below says so out loud when
+// it does.
+
+/** One speed a service delivers at, with the groups delivered at it. */
+type ServiceTiming = {
+  handlingDays: number
+  transitDays: number
+  /** The labelled groups delivered at this speed. */
+  scopes: PricedScope[]
+  /** True where the service's "everything else" rule belongs at this speed. */
+  carriesCatchAll: boolean
+  /** Gross price of that catch-all, or null for "not delivered". Only read
+   *  where carriesCatchAll. */
+  catchAllPrice: number | null
+  /** How many of the shop's groups this speed covers, the catch-all counted as
+   *  one. Decides which speed keeps the plain service name. */
+  weight: number
+}
+
+/** One service as it will be sent, before it has a name. */
+export type TimingDraft = {
+  handlingDays: number
+  transitDays: number
+  groups: MappedRateGroup[]
+  /** True on the one speed that keeps the plain name. */
+  plain: boolean
+}
+
+type ServiceDraft = {
+  serviceKey: string
+  /** What this site calls the delivery service all of these came from. */
+  sourceLabel: string
+  /** Plain-named speed first, then the rest quickest first. */
+  timings: TimingDraft[]
+  /** Working days between the quickest and the slowest of them, 0 where there
+   *  is only one. How much honesty a collapse back to one service would cost,
+   *  which is what decides the order things are collapsed in. */
+  spread: number
+}
+
+/** Identifies one emitted service for naming. Never shown to anybody. */
+function nameKey(serviceKey: string, sourceLabel: string, timing: { handlingDays: number; transitDays: number }): string {
+  return `${serviceKey}\u0000${sourceLabel}\u0000${timing.handlingDays}:${timing.transitDays}`
+}
+
+/** Quickest first, and deterministic. */
+function bySpeed(a: { handlingDays: number; transitDays: number }, b: { handlingDays: number; transitDays: number }): number {
+  return a.transitDays - b.transitDays || a.handlingDays - b.handlingDays
+}
+
+/**
+ * The rate groups for one speed.
+ *
+ * Order is not cosmetic. The catch-all is the only group Google allows an
+ * empty label list on and only in last place, and everything refused has to sit
+ * BEFORE it - a group reached by the catch-all is a group being charged for a
+ * service it cannot have.
+ *
+ * `elsewhere` is the labels this service delivers at some OTHER speed, and it
+ * is only ever non-empty on the speed carrying the catch-all. Without it a
+ * product in the fourteen-day group would match no rate group in the five-day
+ * service, fall through to that service's catch-all, and be quoted the wrong
+ * price at the wrong speed - which is the same silent mispricing the split
+ * exists to end. Speeds with no catch-all need nothing: a label matching no
+ * group there simply means the service is not offered, which is true.
+ */
+function rateGroupsFor(
+  timing: ServiceTiming,
+  labels: DeliveryLabelMap,
+  refused: string[],
+  elsewhere: string[],
+): MappedRateGroup[] {
+  const groups: MappedRateGroup[] = []
+
+  const byPrice = new Map<number, string[]>()
+  for (const scope of timing.scopes) {
+    const label = labels.byScopeId.get(scope.scopeId)
+    if (!label || scope.price === null) continue
+    const existing = byPrice.get(scope.price) ?? []
+    existing.push(label)
+    byPrice.set(scope.price, existing)
+  }
+
+  for (const [price, groupLabels] of [...byPrice.entries()].sort((a, b) => a[0] - b[0])) {
+    // Google takes 30 labels in a group; a price shared by more than that
+    // becomes several groups charging the same, which is an exact mapping
+    // rather than a compromise.
+    for (const part of chunk([...groupLabels].sort((a, b) => a.localeCompare(b, 'en-GB')), MAX_LABELS_PER_RATE_GROUP)) {
+      groups.push({ price, labels: part, catchAll: false })
+    }
+  }
+
+  for (const part of chunk([...refused].sort((a, b) => a.localeCompare(b, 'en-GB')), MAX_LABELS_PER_RATE_GROUP)) {
+    groups.push({ price: null, labels: part, catchAll: false })
+  }
+
+  for (const part of chunk([...elsewhere].sort((a, b) => a.localeCompare(b, 'en-GB')), MAX_LABELS_PER_RATE_GROUP)) {
+    groups.push({ price: null, labels: part, catchAll: false })
+  }
+
+  if (timing.carriesCatchAll) {
+    groups.push({ price: timing.catchAllPrice, labels: [], catchAll: true })
+  }
+
+  return groups
+}
+
+type MapServiceOptions = {
+  /** Send it as ONE service at its slowest speed, the way this worked before
+   *  the split. Only ever set by the cap fallback below - a service that
+   *  genuinely delivers at one speed takes the ordinary path and comes out
+   *  byte for byte as it always did. */
+  collapseForCap: boolean
+}
+
+function mapOneService(service: DeliveryServiceEntry, input: MappingInput, options: MapServiceOptions): {
+  draft: ServiceDraft | null
   notes: MappingNote[]
 } {
   const notes: MappingNote[] = []
@@ -259,7 +411,7 @@ function mapOneService(service: DeliveryServiceEntry, input: MappingInput): {
       service: service.label,
       message: `"${service.label}" is not offered to anything at the moment, so it has not been sent.`,
     })
-    return { mapped: null, notes }
+    return { draft: null, notes }
   }
 
   // ---- Groups this service cannot be expressed for --------------------------
@@ -277,43 +429,9 @@ function mapOneService(service: DeliveryServiceEntry, input: MappingInput): {
         + 'Nothing has been sent for this service. Give it a rule of its own for those groups, or write all of its rules against the '
         + 'same sort of thing.',
     })
-    return { mapped: null, notes }
+    return { draft: null, notes }
   }
 
-  // ---- Delivery time --------------------------------------------------------
-  // Merchant Center holds ONE delivery time per service; this site can vary it
-  // per group. The slowest is sent, because a promise the shop cannot keep is
-  // the expensive kind of wrong, and the owner is told which groups are being
-  // quoted more slowly than they really are.
-  //
-  // Only the groups the service is actually OFFERED to count. A refused group
-  // has no delivery time to promise, and letting one drag the figure out would
-  // slow down every product that can genuinely have the service.
-  //
-  // The service's OWN timing is used only where no group has a price - the
-  // shop's default service, reaching everything for nothing. Where groups do
-  // exist, every product gets one of them, so folding the service's own figure
-  // into the maximum would quote a delay that nothing is actually subject to.
-  const ownCounts = deliveryCounts(catalogue.dispatch.dispatchLeadDays, service.transitDays, service.minLeadDays)
-  const handlingDays = offered.length > 0 ? Math.max(...offered.map((scope) => scope.handlingDays)) : ownCounts.handlingDays
-  const transitDays = offered.length > 0 ? Math.max(...offered.map((scope) => scope.transitDays)) : ownCounts.transitDays
-  const quicker = offered.filter((scope) => scope.handlingDays < handlingDays || scope.transitDays < transitDays)
-  if (quicker.length > 0) {
-    const names = quicker.map((scope) => scopeLabelOf(catalogue, scope.scopeId)).join(', ')
-    notes.push({
-      severity: 'warning',
-      service: service.label,
-      message: `Google holds one delivery time per service, and "${service.label}" takes different lengths of time for different `
-        + `groups. The slowest has been used - ${handlingDays} working ${handlingDays === 1 ? 'day' : 'days'} to send and `
-        + `${transitDays} on the way - so these will be quoted more slowly than they really are: ${names}.`,
-    })
-  }
-
-  // ---- Rate groups ----------------------------------------------------------
-  // One group per price, then one group listing everything the service is
-  // refused to, then the catch-all. The catch-all is the "everything" rule
-  // where the shop has one, and is always last, which is the only position
-  // Google allows an empty label list in.
   const catchAllScope = priced.find((scope) => scope.isDefaultScope)
   const labelled = priced.filter((scope) => !scope.isDefaultScope)
 
@@ -332,39 +450,115 @@ function mapOneService(service: DeliveryServiceEntry, input: MappingInput): {
         + `charged whatever the last rule says instead: ${names}. Nothing has been sent for this service. Give those groups a name `
         + 'on this site and it can go.',
     })
-    return { mapped: null, notes }
+    return { draft: null, notes }
   }
 
-  const byPrice = new Map<number, string[]>()
+  // The groups this site REFUSES the service to, which become noShipping rather
+  // than being left out. Dropping them - which is what this did at first - is a
+  // silent mispricing: a group with no rate group of its own falls through to
+  // the catch-all, so Merchant Center would go on offering and CHARGING a
+  // service this site refuses that product.
   const refused: string[] = []
+  const offeredLabelled: PricedScope[] = []
   for (const scope of labelled) {
     const label = labels.byScopeId.get(scope.scopeId)
     if (!label) continue
-    if (!scope.available || scope.price === null) {
-      refused.push(label)
-      continue
-    }
-    const existing = byPrice.get(scope.price) ?? []
-    existing.push(label)
-    byPrice.set(scope.price, existing)
+    if (!scope.available || scope.price === null) refused.push(label)
+    else offeredLabelled.push(scope)
   }
 
-  const groups: MappedRateGroup[] = []
-  for (const [price, groupLabels] of [...byPrice.entries()].sort((a, b) => a[0] - b[0])) {
-    // Google takes 30 labels in a group; a price shared by more than that
-    // becomes several groups charging the same, which is an exact mapping
-    // rather than a compromise.
-    for (const part of chunk([...groupLabels].sort((a, b) => a.localeCompare(b, 'en-GB')), MAX_LABELS_PER_RATE_GROUP)) {
-      groups.push({ price, labels: part, catchAll: false })
-    }
+  // The service's OWN timing is used only where no group has a price - the
+  // shop's default service, reaching everything for nothing. Where groups do
+  // exist, every product gets one of them.
+  const ownCounts = deliveryCounts(catalogue.dispatch.dispatchLeadDays, service.transitDays, service.minLeadDays)
+
+  // ---- The speeds it delivers at --------------------------------------------
+  const timings = new Map<string, ServiceTiming>()
+  const at = (handlingDays: number, transitDays: number): ServiceTiming => {
+    const key = `${handlingDays}:${transitDays}`
+    const found = timings.get(key)
+    if (found) return found
+    const made: ServiceTiming = { handlingDays, transitDays, scopes: [], carriesCatchAll: false, catchAllPrice: null, weight: 0 }
+    timings.set(key, made)
+    return made
   }
 
-  // The refusals, as their own groups. Before the catch-all, because a group
-  // reached by the catch-all is a group being charged for a service it cannot
-  // have.
-  for (const part of chunk(refused.sort((a, b) => a.localeCompare(b, 'en-GB')), MAX_LABELS_PER_RATE_GROUP)) {
-    groups.push({ price: null, labels: part, catchAll: false })
+  // Only the groups the service is actually OFFERED to count towards the
+  // slowest. A refused group has no delivery time to promise, and letting one
+  // drag the figure out would slow down every product that can genuinely have
+  // the service.
+  const slowest = options.collapseForCap
+    ? at(
+      offered.length > 0 ? Math.max(...offered.map((scope) => scope.handlingDays)) : ownCounts.handlingDays,
+      offered.length > 0 ? Math.max(...offered.map((scope) => scope.transitDays)) : ownCounts.transitDays,
+    )
+    : null
+
+  for (const scope of offeredLabelled) {
+    const timing = slowest ?? at(scope.handlingDays, scope.transitDays)
+    timing.scopes.push(scope)
+    timing.weight++
   }
+
+  if (catchAllScope?.available) {
+    const timing = slowest ?? at(catchAllScope.handlingDays, catchAllScope.transitDays)
+    timing.carriesCatchAll = true
+    timing.catchAllPrice = catchAllScope.price
+    timing.weight++
+  } else if (!catchAllScope && service.isDefault) {
+    // The shop's default service reaches everything, free, whether or not a
+    // rule mentions it - so its catch-all is free too, at the service's own
+    // speed.
+    const timing = slowest ?? at(ownCounts.handlingDays, ownCounts.transitDays)
+    timing.carriesCatchAll = true
+    timing.catchAllPrice = 0
+    timing.weight++
+  }
+
+  if (timings.size === 0) {
+    notes.push({
+      severity: 'info',
+      service: service.label,
+      message: `"${service.label}" has no price that could be sent, so it has been left out.`,
+    })
+    return { draft: null, notes }
+  }
+
+  // Which speed keeps the plain name: the one covering the most groups, and
+  // where two cover the same number, the quicker. Never the insertion order -
+  // a name that moved between runs would make every push read as a change.
+  const ranked = [...timings.values()].sort((a, b) => (
+    b.weight - a.weight
+    || (a.handlingDays + a.transitDays) - (b.handlingDays + b.transitDays)
+    || bySpeed(a, b)
+  ))
+  const plain = ranked[0]
+  if (!plain) {
+    notes.push({
+      severity: 'info',
+      service: service.label,
+      message: `"${service.label}" has no price that could be sent, so it has been left out.`,
+    })
+    return { draft: null, notes }
+  }
+
+  // A refusal has no speed to promise, so the "everything else: not delivered"
+  // rule rides with whatever speed most of the service delivers at rather than
+  // inventing a timing of its own.
+  if (catchAllScope && !catchAllScope.available) {
+    plain.carriesCatchAll = true
+    plain.catchAllPrice = null
+  }
+
+  if (!catchAllScope && !service.isDefault) {
+    notes.push({
+      severity: 'info',
+      service: service.label,
+      message: `"${service.label}" has no rule covering everything, so any product outside the groups above is not offered it. `
+        + 'Google will price such a product on your other services only.',
+    })
+  }
+
   if (refused.length > 0) {
     notes.push({
       severity: 'info',
@@ -375,71 +569,67 @@ function mapOneService(service: DeliveryServiceEntry, input: MappingInput): {
     })
   }
 
-  if (catchAllScope) {
-    groups.push({ price: catchAllScope.available ? catchAllScope.price : null, labels: [], catchAll: true })
-  } else if (service.isDefault) {
-    // The shop's default service reaches everything, free, whether or not a
-    // rule mentions it - so its catch-all is free too.
-    groups.push({ price: 0, labels: [], catchAll: true })
-  } else {
-    notes.push({
-      severity: 'info',
-      service: service.label,
-      message: `"${service.label}" has no rule covering everything, so any product outside the groups above is not offered it. `
-        + 'Google will price such a product on your other services only.',
-    })
-  }
+  // ---- What each speed carries ----------------------------------------------
+  const ordered = [plain, ...[...timings.values()].filter((timing) => timing !== plain).sort(bySpeed)]
+  const drafts: TimingDraft[] = ordered.map((timing) => {
+    const elsewhere = timing.carriesCatchAll
+      ? ordered
+        .filter((other) => other !== timing)
+        .flatMap((other) => other.scopes.flatMap((scope) => {
+          const label = labels.byScopeId.get(scope.scopeId)
+          return label ? [label] : []
+        }))
+      : []
+    return {
+      handlingDays: timing.handlingDays,
+      transitDays: timing.transitDays,
+      groups: rateGroupsFor(timing, labels, refused, elsewhere),
+      plain: timing === plain,
+    }
+  })
 
-  if (groups.length === 0) {
+  // Nothing priced at any speed. Only reachable on the collapse path, which
+  // makes its one speed before it knows whether anything hangs off it - but it
+  // is the same "left out, and told why" the split path gives, rather than a
+  // service sent to Google with no rate group in it at all.
+  if (drafts.every((draft) => draft.groups.length === 0)) {
     notes.push({
       severity: 'info',
       service: service.label,
       message: `"${service.label}" has no price that could be sent, so it has been left out.`,
     })
-    return { mapped: null, notes }
+    return { draft: null, notes }
   }
 
-  if (groups.length > MAX_RATE_GROUPS_PER_SERVICE) {
+  const totals = drafts.map((draft) => draft.handlingDays + draft.transitDays)
+  const spread = totals.length > 1 ? Math.max(...totals) - Math.min(...totals) : 0
+
+  if (options.collapseForCap) {
+    // Said in full, because the owner is being given a worse answer than the
+    // one this site would rather give and is owed the reason.
+    const quicker = offered.filter((scope) => scope.handlingDays < plain.handlingDays || scope.transitDays < plain.transitDays)
+    const names = quicker.map((scope) => scopeLabelOf(catalogue, scope.scopeId)).join(', ')
     notes.push({
-      severity: 'blocking',
+      severity: 'warning',
       service: service.label,
-      message: `"${service.label}" needs ${groups.length} different prices and Google allows ${MAX_RATE_GROUPS_PER_SERVICE} per `
-        + 'service. Nothing has been sent for it, because dropping the extra prices would charge those products the wrong amount. '
-        + 'Give some of these groups the same price, or split the service in two.',
+      message: `"${service.label}" takes different lengths of time for different groups, and Google holds one delivery time per `
+        + `service. Normally each speed would go as a service of its own, but that would take you past Google's limit of `
+        + `${MAX_SERVICES_PER_COUNTRY} delivery services per country - so the slowest has been used for all of them: `
+        + `${plain.handlingDays} working ${plain.handlingDays === 1 ? 'day' : 'days'} to send and ${plain.transitDays} on the way. `
+        + `These will be quoted more slowly than they really are: ${names}.`,
     })
-    return { mapped: null, notes }
-  }
-
-  const { hour, minute } = splitCutoff(catalogue.dispatch.cutoffTime)
-  const week = businessDays(catalogue.dispatch.shipDays)
-
-  const payload: MerchantService = {
-    serviceName: service.label,
-    active: true,
-    deliveryCountries: [input.country],
-    currencyCode: input.currency,
-    deliveryTime: {
-      minHandlingDays: handlingDays,
-      maxHandlingDays: handlingDays,
-      minTransitDays: transitDays,
-      maxTransitDays: transitDays,
-      cutoffTime: { hour, minute, timeZone: catalogue.dispatch.timezone },
-      handlingBusinessDayConfig: { businessDays: week },
-      transitBusinessDayConfig: { businessDays: week },
-    },
-    rateGroups: groups.map((group): MerchantRateGroup => ({
-      applicableShippingLabels: group.labels,
-      // A null price is a REFUSAL, never a free delivery. Sending
-      // toAmountMicros(0) here would advertise the one thing this site will not
-      // do as the cheapest thing it does.
-      singleValue: group.price === null
-        ? { noShipping: true }
-        : { flatRate: { amountMicros: toAmountMicros(group.price), currencyCode: input.currency } },
-    })),
+  } else if (drafts.length > 1) {
+    notes.push({
+      severity: 'info',
+      service: service.label,
+      message: `"${service.label}" takes different lengths of time for different groups, and Google holds one delivery time per `
+        + `service - so it goes to Merchant Center as ${drafts.length} services, one per length of time, each covering only the `
+        + 'groups that really take that long. You will see all of them in Merchant Center under slightly different names.',
+    })
   }
 
   return {
-    mapped: { serviceKey: service.key, serviceName: service.label, handlingDays, transitDays, groups, payload },
+    draft: { serviceKey: service.key, sourceLabel: service.label, timings: drafts, spread },
     notes,
   }
 }
@@ -535,20 +725,190 @@ export function mapDeliveryCatalogue(input: MappingInput): DeliveryMapping {
   }
 
   // ---- The services themselves ----------------------------------------------
-  const services: MappedService[] = []
-  for (const service of catalogue.services) {
-    const { mapped, notes: serviceNotes } = mapOneService(service, input)
-    notes.push(...serviceNotes)
-    if (mapped) services.push(mapped)
+  const drafted = catalogue.services.map((service) => {
+    const mapped = mapOneService(service, input, { collapseForCap: false })
+    return { service, draft: mapped.draft, notes: mapped.notes }
+  })
+
+  // ---- Google's cap on services per country ---------------------------------
+  //
+  // Splitting by speed makes more services, and Google refuses the WHOLE
+  // payload above twenty per country - counting services this site does not
+  // manage, which are copied back untouched by every push. So the count is
+  // taken first, and where it would not fit, services are collapsed back to one
+  // apiece until it does.
+  //
+  // Least costly first, which means the ones whose speeds differ LEAST. A
+  // service whose slowest group is fourteen days against five is where the lie
+  // is worst, so it is the last thing collapsed, not the first.
+  //
+  // `unmanagedServiceCount` comes from the last comparison, so the preview and
+  // the send work from the same number and agree on what would go. The send
+  // counts the real payload again afterwards against a fresh read and refuses
+  // outright if it still does not fit - see lib/delivery/push.ts.
+  const unmanaged = Math.max(0, Math.trunc(input.unmanagedServiceCount ?? 0))
+  let wanted = drafted.reduce((total, entry) => total + (entry.draft?.timings.length ?? 0), 0) + unmanaged
+  const collapsed: string[] = []
+  if (wanted > MAX_SERVICES_PER_COUNTRY) {
+    const splitters = drafted
+      .flatMap((entry) => (entry.draft && entry.draft.timings.length > 1 ? [{ entry, draft: entry.draft }] : []))
+      .sort((a, b) => (
+        a.draft.spread - b.draft.spread
+        || a.draft.timings.length - b.draft.timings.length
+        || a.draft.sourceLabel.localeCompare(b.draft.sourceLabel, 'en-GB')
+      ))
+    for (const { entry, draft } of splitters) {
+      if (wanted <= MAX_SERVICES_PER_COUNTRY) break
+      const again = mapOneService(entry.service, input, { collapseForCap: true })
+      // What the collapse actually saved, not what it was assumed to save. A
+      // collapse that came back with nothing at all has cost the service every
+      // one of its entries, and guessing "one fewer" there would leave the
+      // count believing a slot was still in use.
+      wanted -= draft.timings.length - (again.draft?.timings.length ?? 0)
+      entry.draft = again.draft
+      entry.notes = again.notes
+      collapsed.push(draft.sourceLabel)
+    }
   }
 
-  if (services.length > MAX_SERVICES_PER_COUNTRY) {
+  if (collapsed.length > 0) {
+    notes.push({
+      severity: 'warning',
+      service: null,
+      message: `Google allows ${MAX_SERVICES_PER_COUNTRY} delivery services per country, and sending one for every different `
+        + `length of time would have gone past it. ${collapsed.length === 1 ? 'This one has' : `These ${collapsed.length} have`} `
+        + 'been sent at their slowest speed instead, starting with the ones whose times differ least: '
+        + `${collapsed.join(', ')}. Anything not listed here still goes at its own speed.`,
+    })
+  }
+
+  if (wanted > MAX_SERVICES_PER_COUNTRY) {
     notes.push({
       severity: 'blocking',
       service: null,
-      message: `You have ${services.length} delivery services and Google allows ${MAX_SERVICES_PER_COUNTRY} per country. Nothing `
-        + 'can be sent until some of them are retired or combined.',
+      message: `This would leave ${wanted} delivery services in your Merchant Center account and Google allows `
+        + `${MAX_SERVICES_PER_COUNTRY} per country, so nothing has been sent. `
+        + (unmanaged > 0
+          ? `${unmanaged} of them ${unmanaged === 1 ? 'is one' : 'are ones'} this site does not manage, which every send copies `
+            + 'back untouched. Remove some of those in Merchant Center, or retire or combine some delivery services here.'
+          : 'Retire or combine some of your delivery services here.'),
     })
+  }
+
+  // ---- Naming ---------------------------------------------------------------
+  //
+  // All of them at once, because the names have to be unique across the whole
+  // payload and not merely within one service. Order is catalogue order with
+  // each service's plain-named speed first, so the ordinary services keep their
+  // ordinary names and it is the unusual speeds that get qualified.
+  const requests: ServiceNameRequest[] = []
+  for (const entry of drafted) {
+    const draft = entry.draft
+    if (!draft) continue
+    for (const timing of draft.timings) {
+      requests.push({
+        key: nameKey(draft.serviceKey, draft.sourceLabel, timing),
+        label: draft.sourceLabel,
+        handlingDays: timing.handlingDays,
+        transitDays: timing.transitDays,
+        plain: timing.plain,
+      })
+    }
+  }
+  // Positional, and taken back positionally below. Two site services that share
+  // a name would share a key, and anything looked up BY that key would hand
+  // them both the same Merchant Center name - which is the one thing a service
+  // name may never be, since Merchant Center has no other way to tell two
+  // services apart.
+  const names = assignServiceNames(requests)
+
+  // ---- Assembling the payload -----------------------------------------------
+  //
+  // Every limit Google enforces on a thing this file BUILDS is checked here,
+  // at the moment it becomes a payload, and a service that fails one is left
+  // out entirely rather than sent and hoped for. Google refuses the whole
+  // request over one bad service, so sending a name we have counted as too
+  // long would lose the services that were perfectly fine along with it.
+  const { hour, minute } = splitCutoff(catalogue.dispatch.cutoffTime)
+  const week = businessDays(catalogue.dispatch.shipDays)
+  const services: MappedService[] = []
+  let cursor = 0
+
+  for (const entry of drafted) {
+    notes.push(...entry.notes)
+    const draft = entry.draft
+    if (!draft) continue
+
+    const mine = names.slice(cursor, cursor + draft.timings.length)
+    cursor += draft.timings.length
+
+    const built: MappedService[] = []
+    let refusal: string | null = null
+    for (const [index, timing] of draft.timings.entries()) {
+      const name = mine[index] ?? null
+      if (name === null) {
+        refusal = `"${draft.sourceLabel}" could not be given a name Google would accept: it needs a different name for each `
+          + 'length of time it takes, they have to fit inside 50 characters, and no two services may share one. Nothing has been '
+          + 'sent for it. Give it a shorter name on this site and it can go.'
+        break
+      }
+      if (name.length > MAX_SERVICE_NAME_LENGTH) {
+        // Belt and braces on assignServiceNames' own promise. If this ever
+        // fires it is a bug here, not a fact about the shop - but it fires as a
+        // refusal rather than as a payload Google throws out wholesale.
+        refusal = `"${draft.sourceLabel}" would be sent to Google as "${name}", which is ${name.length} characters, and Google `
+          + `allows ${MAX_SERVICE_NAME_LENGTH}. Nothing has been sent for it. Give it a shorter name on this site.`
+        break
+      }
+      if (timing.groups.length > MAX_RATE_GROUPS_PER_SERVICE) {
+        refusal = `"${name}" needs ${timing.groups.length} different prices and Google allows ${MAX_RATE_GROUPS_PER_SERVICE} per `
+          + 'service. Nothing has been sent for it, because dropping the extra prices would charge those products the wrong '
+          + 'amount. Give some of these groups the same price, or split the service in two.'
+        break
+      }
+
+      built.push({
+        serviceKey: draft.serviceKey,
+        serviceName: name,
+        handlingDays: timing.handlingDays,
+        transitDays: timing.transitDays,
+        groups: timing.groups,
+        payload: {
+          serviceName: name,
+          active: true,
+          deliveryCountries: [input.country],
+          currencyCode: input.currency,
+          deliveryTime: {
+            minHandlingDays: timing.handlingDays,
+            maxHandlingDays: timing.handlingDays,
+            minTransitDays: timing.transitDays,
+            maxTransitDays: timing.transitDays,
+            cutoffTime: { hour, minute, timeZone: catalogue.dispatch.timezone },
+            handlingBusinessDayConfig: { businessDays: week },
+            transitBusinessDayConfig: { businessDays: week },
+          },
+          rateGroups: timing.groups.map((group): MerchantRateGroup => ({
+            applicableShippingLabels: group.labels,
+            // A null price is a REFUSAL, never a free delivery. Sending
+            // toAmountMicros(0) here would advertise the one thing this site
+            // will not do as the cheapest thing it does.
+            singleValue: group.price === null
+              ? { noShipping: true }
+              : { flatRate: { amountMicros: toAmountMicros(group.price), currencyCode: input.currency } },
+          })),
+        },
+      })
+    }
+
+    // One bad speed takes the whole service with it. Sending the rest would
+    // leave the groups it covered falling through to another speed's catch-all
+    // or off Google altogether, which is a wrong price rather than a missing
+    // one.
+    if (refusal !== null) {
+      notes.push({ severity: 'blocking', service: draft.sourceLabel, message: refusal })
+      continue
+    }
+    services.push(...built)
   }
 
   // A shop with no service at all is not an error, but it must not read as one

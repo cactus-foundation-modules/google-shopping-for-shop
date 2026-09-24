@@ -281,9 +281,11 @@ describe('mapDeliveryCatalogue', () => {
     expect(map(cat).blocked).toBe(false)
   })
 
-  // Merchant Center holds one delivery time per service. Quoting the fastest
-  // would have the shop promising dates it cannot keep.
-  it('sends the slowest timing when groups differ, and names the ones affected', () => {
+  // Merchant Center holds one delivery time per service, and this site can vary
+  // it per group. Sending the slowest - which is what this did until a shop
+  // with twenty-five groups at five days and one at fourteen found every
+  // product quoted at fourteen - is now the fallback rather than the rule.
+  it('sends a service per distinct delivery time rather than the slowest of them', () => {
     const cat = catalogue(
       [scope('range:a', 'Orion'), scope('range:b', 'Vega')],
       [service('Standard', [
@@ -291,13 +293,16 @@ describe('mapDeliveryCatalogue', () => {
         rate('range:b', 10, { transitDays: 9 }),
       ])],
     )
-    const { services, notes } = map(cat)
-    expect(services[0]?.transitDays).toBe(9)
-    expect(services[0]?.payload.deliveryTime?.minTransitDays).toBe(9)
-    expect(services[0]?.payload.deliveryTime?.maxTransitDays).toBe(9)
-    const warning = notes.find((note) => note.severity === 'warning' && note.service === 'Standard')
-    expect(warning?.message).toContain('Orion')
-    expect(warning?.message).not.toContain('Vega')
+    const { services, blocked } = map(cat)
+    expect(blocked).toBe(false)
+    expect(services.map((entry) => entry.transitDays).sort((a, b) => a - b)).toEqual([2, 9])
+    for (const entry of services) {
+      expect(entry.payload.deliveryTime?.minTransitDays).toBe(entry.transitDays)
+      expect(entry.payload.deliveryTime?.maxTransitDays).toBe(entry.transitDays)
+    }
+    // Neither is quoted at the other's speed any more, so nothing warns.
+    expect(services.some((entry) => entry.transitDays === 9 && entry.groups.some((group) => group.labels.includes('Orion')
+      && group.price !== null))).toBe(false)
   })
 
   it('does not let a service\'s own timing slow down groups that all override it', () => {
@@ -410,5 +415,191 @@ describe('mapDeliveryCatalogue', () => {
   it('warns when a group outside every rule gets no price on a service', () => {
     const cat = catalogue([scope('range:a', 'Orion')], [service('Standard', [rate('range:a', 9)])])
     expect(map(cat).notes.some((note) => note.message.includes('no rule covering everything'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// One service per delivery time
+// ---------------------------------------------------------------------------
+//
+// Google holds one delivery time per service and this site varies it per group.
+// Sending the slowest quoted a whole catalogue at its worst case - twenty-five
+// groups at five days and one at fourteen meant everything read fourteen - so a
+// service that delivers at several speeds now goes as several services.
+describe('mapDeliveryCatalogue, splitting by delivery time', () => {
+  it('splits one service into one per distinct timing, with the right prices in each', () => {
+    const cat = catalogue(
+      [scope('range:a', 'Orion'), scope('range:b', 'Vega'), scope('default', 'Everything', 'DEFAULT')],
+      [service('Flat-Pack', [
+        rate('range:a', 10, { transitDays: 5 }),
+        rate('range:b', 20, { transitDays: 14 }),
+        rate('default', 30, { transitDays: 5 }),
+      ])],
+    )
+    const { services, blocked } = map(cat)
+    expect(blocked).toBe(false)
+    expect(services.map((entry) => entry.serviceName)).toEqual(['Flat-Pack', 'Flat-Pack - 14 days'])
+
+    const quick = services[0]
+    expect(quick?.transitDays).toBe(5)
+    expect(quick?.groups).toEqual([
+      { price: 10, labels: ['Orion'], catchAll: false },
+      // Vega delivers at the other speed, so it is refused HERE rather than
+      // left to fall through to the catch-all below at the wrong price and the
+      // wrong time. That fall-through is the whole hazard of splitting.
+      { price: null, labels: ['Vega'], catchAll: false },
+      { price: 30, labels: [], catchAll: true },
+    ])
+
+    const slow = services[1]
+    expect(slow?.transitDays).toBe(14)
+    expect(slow?.groups).toEqual([{ price: 20, labels: ['Vega'], catchAll: false }])
+    // No catch-all on the second one: a product outside its group is not
+    // delivered at fourteen days, it is delivered at five by the first.
+    expect(slow?.groups.some((group) => group.catchAll)).toBe(false)
+  })
+
+  it('gives the plain name to the timing that covers the most groups, not the quickest', () => {
+    const cat = catalogue(
+      [scope('range:a', 'Orion'), scope('range:b', 'Vega'), scope('range:c', 'Lyra')],
+      [service('Installation', [
+        rate('range:a', 10, { transitDays: 10 }),
+        rate('range:b', 10, { transitDays: 10 }),
+        rate('range:c', 10, { transitDays: 24 }),
+      ])],
+    )
+    const { services } = map(cat)
+    expect(services.map((entry) => entry.serviceName)).toEqual(['Installation', 'Installation - 24 days'])
+    expect(services[0]?.transitDays).toBe(10)
+    expect(services[1]?.transitDays).toBe(24)
+  })
+
+  it('leaves a service that delivers at one speed exactly as it was', () => {
+    const cat = catalogue(
+      [scope('range:a', 'Orion'), scope('default', 'Everything', 'DEFAULT')],
+      [service('Standard', [rate('range:a', 10), rate('default', 5)])],
+    )
+    const { services, notes } = map(cat)
+    expect(services).toHaveLength(1)
+    expect(services[0]?.serviceName).toBe('Standard')
+    expect(services[0]?.groups).toEqual([
+      { price: 10, labels: ['Orion'], catchAll: false },
+      { price: 5, labels: [], catchAll: true },
+    ])
+    expect(notes.some((note) => note.message.includes('one per length of time'))).toBe(false)
+  })
+
+  it('keeps every name inside Google\'s 50 characters and unique', () => {
+    // The shop's longest service name is 34 characters, so it is the timing
+    // suffix that takes one past the limit rather than the name itself.
+    const label = 'Made To Order and Delivered on Wooden Pallets'
+    const cat = catalogue(
+      [scope('range:a', 'Orion'), scope('range:b', 'Vega')],
+      [service(label, [
+        rate('range:a', 10, { transitDays: 5 }),
+        rate('range:b', 20, { transitDays: 14 }),
+      ])],
+    )
+    const { services, blocked } = map(cat)
+    expect(blocked).toBe(false)
+    expect(services).toHaveLength(2)
+    const names = services.map((entry) => entry.serviceName)
+    expect(names[0]).toBe(label)
+    for (const name of names) expect(name.length).toBeLessThanOrEqual(50)
+    expect(new Set(names).size).toBe(2)
+  })
+
+  it('names the same catalogue the same way twice running', () => {
+    const build = (): DeliveryCatalogue => catalogue(
+      [scope('range:a', 'Orion'), scope('range:b', 'Vega'), scope('range:c', 'Lyra')],
+      [
+        service('Flat-Pack', [rate('range:a', 10, { transitDays: 5 }), rate('range:b', 20, { transitDays: 14 })]),
+        service('Installation', [rate('range:c', 30, { transitDays: 10 })]),
+      ],
+    )
+    const first = map(build()).services.map((entry) => entry.serviceName)
+    const second = map(build()).services.map((entry) => entry.serviceName)
+    expect(first).toEqual(second)
+  })
+
+  // Two site services under one name is a state Merchant Center cannot hold -
+  // it has no id for a service, the name IS the identity - so it refuses
+  // rather than truncate into a duplicate.
+  it('refuses a service it cannot give a name that fits and is unique', () => {
+    const scopes = ['a', 'b', 'c', 'd', 'e'].map((suffix) => scope(`range:${suffix}`, `Range ${suffix.toUpperCase()}`))
+    const cat = catalogue(
+      scopes,
+      ['a', 'b', 'c', 'd', 'e'].map((suffix) => service('Standard', [rate(`range:${suffix}`, 10)])),
+    )
+    const { blocked, notes } = map(cat)
+    expect(blocked).toBe(true)
+    expect(notes.some((note) => note.severity === 'blocking'
+      && note.message.includes('could not be given a name Google would accept'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Google's cap of twenty services per country
+// ---------------------------------------------------------------------------
+//
+// Splitting makes more services, and Google refuses the WHOLE payload above
+// twenty - counting services this site does not manage, which every push copies
+// back untouched. So the count is taken first, and where it will not fit the
+// least costly splits are given up before the worst ones.
+describe('mapDeliveryCatalogue, the cap on services per country', () => {
+  function threeServices(): DeliveryCatalogue {
+    return catalogue(
+      [
+        scope('range:a1', 'Alpha'), scope('range:a2', 'Beta'),
+        scope('range:b1', 'Gamma'), scope('range:b2', 'Delta'),
+        scope('range:c1', 'Epsilon'),
+      ],
+      [
+        // Two speeds a day apart: giving this up costs almost nothing.
+        service('Kerbside', [rate('range:a1', 10, { transitDays: 5 }), rate('range:a2', 10, { transitDays: 6 })]),
+        // Two speeds nine days apart: this is where the lie is worst, so it is
+        // the last thing collapsed.
+        service('Installation', [rate('range:b1', 20, { transitDays: 5 }), rate('range:b2', 20, { transitDays: 14 })]),
+        service('Standard', [rate('range:c1', 5, { transitDays: 3 })]),
+      ],
+    )
+  }
+
+  it('splits everything when there is room', () => {
+    const { services, blocked } = map(threeServices(), { unmanagedServiceCount: 0 })
+    expect(blocked).toBe(false)
+    expect(services).toHaveLength(5)
+  })
+
+  it('collapses the service whose timings differ least first', () => {
+    // Five of ours plus sixteen of somebody else's is twenty-one, one over.
+    const { services, notes, blocked } = map(threeServices(), { unmanagedServiceCount: 16 })
+    expect(blocked).toBe(false)
+    expect(services).toHaveLength(4)
+
+    const names = services.map((entry) => entry.serviceName)
+    // Kerbside gave up its split - its two speeds are a day apart.
+    expect(names.filter((name) => name.startsWith('Kerbside'))).toEqual(['Kerbside'])
+    // Installation kept it - five days against fourteen is the one worth having.
+    expect(names.filter((name) => name.startsWith('Installation'))).toHaveLength(2)
+
+    const collapse = notes.find((note) => note.severity === 'warning' && note.message.includes('slowest speed'))
+    expect(collapse?.message).toContain('Kerbside')
+    expect(collapse?.message).not.toContain('Installation')
+
+    // The collapsed one is quoted at its slowest and says so.
+    const kerbside = services.find((entry) => entry.serviceName === 'Kerbside')
+    expect(kerbside?.transitDays).toBe(6)
+    const warned = notes.find((note) => note.service === 'Kerbside' && note.severity === 'warning')
+    expect(warned?.message).toContain('Alpha')
+  })
+
+  it('refuses outright when even collapsing everything will not fit', () => {
+    const { blocked, notes } = map(threeServices(), { unmanagedServiceCount: 20 })
+    expect(blocked).toBe(true)
+    const refusal = notes.find((note) => note.severity === 'blocking' && note.message.includes('This would leave'))
+    expect(refusal?.message).toContain('23')
+    expect(refusal?.message).toContain('20')
+    expect(refusal?.message).toContain('Merchant Center')
   })
 })

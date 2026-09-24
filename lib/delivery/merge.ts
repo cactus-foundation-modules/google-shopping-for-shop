@@ -12,6 +12,28 @@ import type { MappedService } from '@/modules/google-shopping-for-shop/lib/deliv
 import type { MerchantService, MerchantShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
 
 /**
+ * How many shipping services in a payload count towards one country's cap.
+ *
+ * Google allows twenty per country and refuses the WHOLE insert above it, so
+ * this is counted before anything is sent rather than discovered afterwards -
+ * a rejection loses every service in the push, including the ones that were
+ * perfectly fine.
+ *
+ * A service with no countries on it is COUNTED. Google requires the field, so
+ * one without it is something this site does not understand, and the safe
+ * reading of a thing we do not understand is the one that might refuse a push
+ * rather than the one that might lose it. Undercounting here is what a wrongly
+ * accepted payload is made of.
+ */
+export function countServicesForCountry(settings: MerchantShippingSettings, country: string): number {
+  return (settings.services ?? []).filter((service) => {
+    const countries = service.deliveryCountries
+    if (!Array.isArray(countries) || countries.length === 0) return true
+    return countries.includes(country)
+  }).length
+}
+
+/**
  * The settings to send: everything Merchant Center holds, with this site's own
  * services replaced and its retired ones removed.
  *

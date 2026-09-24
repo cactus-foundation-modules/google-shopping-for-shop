@@ -34,13 +34,35 @@ export class GoogleApiError extends Error {
   readonly reason: string | null
   /** The Retry-After header verbatim, when Google sent one. Seconds, as a string. */
   readonly retryAfter: string | null
+  /** Google's `error.details` array, exactly as it arrived.
+   *
+   *  Carried rather than read here, because what is in it depends entirely on
+   *  which API refused: a shipping settings insert answers with an ErrorInfo
+   *  whose reason is VALIDATION_ERRORS and whose metadata names the rule that
+   *  was broken - TOO_MANY_SHIPPING_SERVICES_PER_COUNTRY and the like - and
+   *  that is the ONLY place the real cause appears. `message` is a summary and
+   *  `reason` is the generic INVALID_ARGUMENT.
+   *
+   *  Dropping it is how a refused delivery push came to be recorded as nothing
+   *  but 'failed', which sent somebody looking at the etag for an hour when
+   *  Google had said plainly it was the service cap. Unknown shape on purpose:
+   *  whoever needs it reads it defensively, and nothing here may assume a
+   *  shape Google has not promised. */
+  readonly details: unknown[]
 
-  constructor(message: string, status: number, reason: string | null = null, retryAfter: string | null = null) {
+  constructor(
+    message: string,
+    status: number,
+    reason: string | null = null,
+    retryAfter: string | null = null,
+    details: unknown[] = [],
+  ) {
     super(message)
     this.name = 'GoogleApiError'
     this.status = status
     this.reason = reason
     this.retryAfter = retryAfter
+    this.details = details
   }
 
   /** True while the same request stands a chance of working shortly: rate

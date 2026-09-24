@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { mergeShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merge'
+import { countServicesForCountry, mergeShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merge'
 import type { MappedService } from '@/modules/google-shopping-for-shop/lib/delivery/mapping'
-import type { MerchantShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
+import type { MerchantService, MerchantShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
 
 function mapped(name: string, price: string): MappedService {
   return {
@@ -92,5 +92,36 @@ describe('mergeShippingSettings', () => {
     const current: MerchantShippingSettings = { services: [{ active: true }] }
     const merged = mergeShippingSettings(current, [], ['Something'])
     expect(merged.services).toEqual([{ active: true }])
+  })
+})
+
+// Google refuses the WHOLE insert above twenty services in a country - not the
+// offending one, all of them - so the count has to be right before anything is
+// sent. Splitting by delivery time makes more of them, which is what turned
+// this from arithmetic nobody did into arithmetic that loses a push.
+describe('countServicesForCountry', () => {
+  function service(name: string, deliveryCountries?: string[]): MerchantService {
+    return deliveryCountries === undefined ? { serviceName: name } : { serviceName: name, deliveryCountries }
+  }
+
+  it('counts only the services delivering to the country asked about', () => {
+    const settings: MerchantShippingSettings = {
+      services: [service('Home', ['GB']), service('Eire', ['IE']), service('Both', ['GB', 'IE'])],
+    }
+    expect(countServicesForCountry(settings, 'GB')).toBe(2)
+    expect(countServicesForCountry(settings, 'IE')).toBe(2)
+  })
+
+  // Google requires the field, so a service without one is something this site
+  // does not understand. The safe reading of that is the one that might refuse
+  // a push, never the one that might lose it.
+  it('counts a service with no countries on it at all', () => {
+    expect(countServicesForCountry({ services: [service('Mystery')] }, 'GB')).toBe(1)
+    expect(countServicesForCountry({ services: [service('Mystery', [])] }, 'GB')).toBe(1)
+  })
+
+  it('is nothing on an account with no shipping settings yet', () => {
+    expect(countServicesForCountry({}, 'GB')).toBe(0)
+    expect(countServicesForCountry({ services: [] }, 'GB')).toBe(0)
   })
 })

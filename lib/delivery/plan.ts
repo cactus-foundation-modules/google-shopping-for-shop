@@ -17,7 +17,9 @@ import {
 } from '@/modules/google-shopping-for-shop/lib/delivery/label-agreement'
 import { mapDeliveryCatalogue, type DeliveryMapping } from '@/modules/google-shopping-for-shop/lib/delivery/mapping'
 import { resolveDeliveryPricing } from '@/modules/google-shopping-for-shop/lib/delivery/pricing'
+import { readDeliveryState } from '@/modules/google-shopping-for-shop/lib/delivery/state'
 import { coverageNotes, measureDeliveryCoverage, type DeliveryCoverage } from '@/modules/google-shopping-for-shop/lib/delivery/coverage'
+import type { DeliveryDiff } from '@/modules/google-shopping-for-shop/lib/delivery/diff'
 
 export type DeliveryPlan = {
   /** False where no installed module publishes delivery services at all. */
@@ -32,6 +34,9 @@ export type DeliveryPlan = {
   mapping: DeliveryMapping | null
   /** The Merchant Center account number, or null where it has not been set. */
   merchantId: string | null
+  /** The CLDR territory the services are sent for. Google's cap on shipping
+   *  services is per country, so the send has to count within this one. */
+  country: string
   currency: string
   /** The tax rate the delivery charges were grossed up at, and whether the
    *  shop has more than one - which makes that figure an approximation. */
@@ -57,10 +62,42 @@ export type PlanOptions = {
   withCoverage?: boolean
 }
 
+/**
+ * Shipping services Merchant Center holds that this site does not manage,
+ * as of the last comparison.
+ *
+ * Zero where no comparison has ever been made, which is honestly "not known"
+ * rather than "none": a shop that has never compared cannot know what is over
+ * there. The send counts the real payload against a fresh read before it goes,
+ * so the worst this costs is a split that has to be refused at the last moment
+ * with the real figures in the sentence.
+ */
+function unmanagedAtGoogle(diff: DeliveryDiff | null): number {
+  if (!diff) return 0
+  return diff.services.filter((service) => service.status === 'only-in-google' && !service.managed).length
+}
+
 export async function buildDeliveryPlan(options: PlanOptions = {}): Promise<DeliveryPlan> {
-  const [settings, pricing] = await Promise.all([getGsfSettings(), resolveDeliveryPricing()])
+  // The saved comparison comes along for one number: how many shipping
+  // services Merchant Center already holds that this site does not manage.
+  // They count towards Google's cap of twenty per country, because every send
+  // copies them back untouched - so the mapping needs them before it decides
+  // how many services to split into.
+  //
+  // Read HERE rather than passed in by each caller, and that is the whole
+  // point: the preview and the send both build their plan through this
+  // function, so they read the same number from the same row and cannot
+  // disagree about what would be sent. A caller-supplied figure would make the
+  // send's payload differ from the previewed one and every push would be
+  // refused as stale.
+  const [settings, pricing, state] = await Promise.all([
+    getGsfSettings(),
+    resolveDeliveryPricing(),
+    readDeliveryState(),
+  ])
   const base = {
     merchantId: settings.merchantId,
+    country: settings.shippingCountry,
     currency: pricing.currency,
     taxRate: pricing.rateUsed,
     taxRatesDiffer: pricing.ratesDiffer,
@@ -101,6 +138,7 @@ export async function buildDeliveryPlan(options: PlanOptions = {}): Promise<Deli
     grossUp: pricing.grossUp,
     labelsFromDeliveryScopes,
     perItemShippingOn: settings.sendDeliveryOptions,
+    unmanagedServiceCount: unmanagedAtGoogle(state.lastDiff),
   })
 
   // Counting what would be left uncovered needs a pass over the catalogue's

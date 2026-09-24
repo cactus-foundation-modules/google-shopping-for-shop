@@ -36,6 +36,12 @@
 import { prisma } from '@/lib/db/prisma'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import {
+  GoogleApiError,
+  GoogleAuthError,
+  GoogleCredentialsError,
+  GoogleNetworkError,
+} from '@/modules/google-shopping-for-shop/lib/google/errors'
+import {
   amendChange,
   listChanges,
   recordChange,
@@ -50,9 +56,19 @@ import {
 } from '@/modules/google-shopping-for-shop/lib/delivery/merchant'
 import { recordPush, readDeliveryState } from '@/modules/google-shopping-for-shop/lib/delivery/state'
 import { buildDeliveryPlan } from '@/modules/google-shopping-for-shop/lib/delivery/plan'
-import { mergeShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merge'
+import { countServicesForCountry, mergeShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merge'
 import { planFingerprint } from '@/modules/google-shopping-for-shop/lib/delivery/fingerprint'
-import type { MerchantService, MerchantShippingSettings } from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
+import {
+  describePushFailure,
+  failureDetail,
+  readPushFailure,
+  type PushFailure,
+} from '@/modules/google-shopping-for-shop/lib/delivery/push-errors'
+import {
+  MAX_SERVICES_PER_COUNTRY,
+  type MerchantService,
+  type MerchantShippingSettings,
+} from '@/modules/google-shopping-for-shop/lib/delivery/merchant-types'
 
 /** How far a push got. Only 'done' may be undone.
  *
@@ -72,6 +88,13 @@ export type DeliverySnapshot = {
   /** Absent on a `before` snapshot and on entries written by an older build,
    *  which the undo treats as 'done' - that is what they were. */
   status?: PushStatus
+  /** Why Google refused it, where it did. Present only on a 'failed' entry.
+   *
+   *  The whole reason this field exists: a refused push used to record the word
+   *  'failed' and nothing else, so the one thing anybody needed afterwards -
+   *  what Google actually objected to - was thrown away at the moment it was in
+   *  our hands. See lib/delivery/push-errors.ts. */
+  error?: PushFailure
 }
 
 export type PushOutcome =
@@ -89,6 +112,14 @@ export type PushOutcome =
   | { status: 'blocked'; message: string }
   | { status: 'conflict'; message: string }
   | { status: 'stale'; message: string }
+  | {
+    /** Google was asked and said no. Its own words are in `detail`, always,
+     *  because `message` is this site's reading of them and an owner who has
+     *  to forward it to somebody is entitled to the original. */
+    status: 'refused'
+    message: string
+    detail: string
+  }
 
 const CONFLICT_MESSAGE =
   'Your delivery settings changed at Merchant Center while this page was open, so nothing has been sent. '
@@ -147,6 +178,33 @@ export async function pushDeliverySettings(actor: string | null, expectedFingerp
   const removed = state.managedServices.filter((name) => !managedNow.includes(name))
   const summary = summarise(managedNow, removed)
 
+  // ---- Google's cap, counted against what is really there -------------------
+  //
+  // The mapping has already split by delivery time and already collapsed
+  // services back where it thought it had to, working from the last
+  // comparison's count of what else is in the account. This is the check that
+  // does not work from a saved figure: the settings that came back a moment ago
+  // are what the insert will be measured against, and a service somebody added
+  // in Merchant Center since the last compare is in them.
+  //
+  // Refused rather than sent and hoped for, because Google rejects the WHOLE
+  // insert over this - the services that were fine go down with the ones that
+  // were not - and a refusal here still leaves the account exactly as it is.
+  const servicesInPayload = countServicesForCountry(merged, plan.country)
+  if (servicesInPayload > MAX_SERVICES_PER_COUNTRY) {
+    const unmanaged = servicesInPayload - managedNow.length
+    return {
+      status: 'blocked',
+      message: `Google allows ${MAX_SERVICES_PER_COUNTRY} delivery services per country and this would make `
+        + `${servicesInPayload}, so nothing has been sent. ${managedNow.length} of them ${managedNow.length === 1 ? 'is' : 'are'} `
+        + `from this site`
+        + (unmanaged > 0
+          ? ` and ${unmanaged} ${unmanaged === 1 ? 'is' : 'are'} already in Merchant Center, which every send copies back `
+            + 'untouched. Remove some of those in Merchant Center, or retire or combine some delivery services here.'
+          : '. Retire or combine some of your delivery services here.'),
+    }
+  }
+
   // ---- 1. Record the intent -------------------------------------------------
   const changeId = await prisma.$transaction(async (tx) => recordChange({
     area: 'shipping',
@@ -164,10 +222,19 @@ export async function pushDeliverySettings(actor: string | null, expectedFingerp
   try {
     confirmed = await writeShippingSettings(merchantId, { ...merged, etag: before.etag })
   } catch (error) {
+    // Google's own account of the refusal, kept BEFORE anything else is decided
+    // about it. This is the only moment it exists; a later Compare cannot
+    // recover why a send was turned down.
+    const failure = describePushFailure(error, { servicesInPayload })
     try {
       await amendChange(changeId, {
-        summary: `${summary} - Google refused it, so nothing was changed`,
-        after: { settings: merged, managedServices: state.managedServices, status: 'failed' } satisfies DeliverySnapshot,
+        summary: `${summary} - Google refused it, so nothing was changed. ${failure.explanation}`.slice(0, MAX_SUMMARY),
+        after: {
+          settings: merged,
+          managedServices: state.managedServices,
+          status: 'failed',
+          error: failure,
+        } satisfies DeliverySnapshot,
       })
     } catch (amendError) {
       // The one place a lost write leaves nothing behind at all: the send was
@@ -179,6 +246,14 @@ export async function pushDeliverySettings(actor: string | null, expectedFingerp
       console.error(`[google-shopping] could not mark delivery push ${changeId} as failed:`, amendError)
     }
     if (isEtagConflict(error)) return { status: 'conflict', message: CONFLICT_MESSAGE }
+    // A refusal is an ANSWER, not a crash: Google was asked, Google said no,
+    // and it said why. Throwing sent that reason to a server log and put the
+    // one sentence that fitted every failure in front of the owner instead.
+    // Anything that is not Google answering still throws - a bug here is not
+    // something to dress up as a refusal.
+    if (isGoogleFailure(error)) {
+      return { status: 'refused', message: failure.explanation, detail: failureDetail(failure) }
+    }
     throw error
   }
 
@@ -218,6 +293,20 @@ export async function pushDeliverySettings(actor: string | null, expectedFingerp
   // Merchant Center holds.
   return { status: 'pushed', services: managedNow, removed, changeId, confirmed: confirmedSettings !== null }
 }
+
+/** Whether this was Google answering rather than something here going wrong.
+ *  Only the first sort becomes a 'refused' outcome; the rest keep throwing, so
+ *  a real bug still reads as one. */
+function isGoogleFailure(error: unknown): boolean {
+  return error instanceof GoogleApiError
+    || error instanceof GoogleAuthError
+    || error instanceof GoogleCredentialsError
+    || error instanceof GoogleNetworkError
+}
+
+/** The change log's summary is a line on a list, not a report. Google's full
+ *  words live on the entry's snapshot, where there is room for them. */
+const MAX_SUMMARY = 400
 
 function summarise(sent: string[], removed: string[]): string {
   const parts = [`Sent ${sent.length} delivery ${sent.length === 1 ? 'service' : 'services'} to Merchant Center`]
@@ -357,7 +446,13 @@ function readSnapshot(value: unknown): DeliverySnapshot | null {
   const status = row.status === 'sending' || row.status === 'pending' || row.status === 'failed' || row.status === 'done'
     ? row.status
     : 'done'
-  return { settings: row.settings as MerchantShippingSettings, managedServices: managed, status }
+  const failure = readPushFailure(row.error)
+  return {
+    settings: row.settings as MerchantShippingSettings,
+    managedServices: managed,
+    status,
+    ...(failure ? { error: failure } : {}),
+  }
 }
 
 /** Two sets of services said the same thing. Compared by name and by content,
@@ -385,7 +480,10 @@ async function undoDeliveryPush(context: UndoContext): Promise<UndoResult> {
   if (!before || !after) return { restored: 0, skipped: 1, summary: 'That delivery entry has no readable snapshot to put back.' }
 
   if (after.status === 'failed') {
-    return { restored: 0, skipped: 1, summary: 'That send was refused by Google, so there is nothing to put back.' }
+    // With the reason, where the entry has one. An owner reading the log months
+    // later is exactly who that was written down for.
+    const why = after.error ? ` ${after.error.explanation}` : ''
+    return { restored: 0, skipped: 1, summary: `That send was refused by Google, so there is nothing to put back.${why}` }
   }
   if (after.status === 'sending' || after.status === 'pending') {
     // The two states where we genuinely do not know. Undoing on a guess could

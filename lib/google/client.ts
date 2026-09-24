@@ -108,7 +108,14 @@ function backoffMs(attempt: number, base: number, retryAfter: string | null): nu
 }
 
 type GoogleErrorBody = {
-  error?: { message?: string; status?: string; errors?: Array<{ reason?: string }> }
+  error?: {
+    message?: string
+    status?: string
+    errors?: Array<{ reason?: string }>
+    /** google.rpc status details. Shape varies by API and is not ours to
+     *  model; carried through to the caller whole. */
+    details?: unknown[]
+  }
   error_description?: string
 }
 
@@ -120,6 +127,14 @@ function errorMessage(body: GoogleErrorBody | null, fallback: string): string {
 
 function errorReason(body: GoogleErrorBody | null): string | null {
   return body?.error?.status?.trim() || body?.error?.errors?.[0]?.reason?.trim() || null
+}
+
+/** Google's own structured account of what was wrong, when it sent one. The
+ *  summary in `message` is frequently the generic one and the detail is where
+ *  the actual rule that was broken is named. */
+function errorDetails(body: GoogleErrorBody | null): unknown[] {
+  const details = body?.error?.details
+  return Array.isArray(details) ? details : []
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -272,6 +287,7 @@ export async function merchantRequest<T>(path: string, options: RequestOptions =
       response.status,
       errorReason(json as GoogleErrorBody | null),
       response.headers.get('retry-after'),
+      errorDetails(json as GoogleErrorBody | null),
     )
     if (response.status === 401 && !refreshed) {
       refreshed = true

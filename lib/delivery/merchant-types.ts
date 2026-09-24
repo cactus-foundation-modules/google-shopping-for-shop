@@ -18,8 +18,14 @@
 //   20 rate groups per service
 //   30 labels per rate group
 //   100 characters per shipping label
+//   50 characters per shipping service name
 // Nothing here may exceed them, and anything that would has to be said out
 // loud rather than trimmed quietly.
+//
+// The last two are different numbers for different things and have been
+// confused once already: a LABEL gets 100 characters and a SERVICE NAME gets
+// 50. The longest label on the live shop is 99 characters and is perfectly
+// legal; nothing may "fix" it by cutting it to 50.
 
 /** Shipping services allowed per country in one account. */
 export const MAX_SERVICES_PER_COUNTRY = 20
@@ -27,6 +33,10 @@ export const MAX_SERVICES_PER_COUNTRY = 20
 export const MAX_RATE_GROUPS_PER_SERVICE = 20
 /** Shipping labels allowed in one rate group. */
 export const MAX_LABELS_PER_RATE_GROUP = 30
+/** Characters allowed in one shipping SERVICE name. Not the label limit: see
+ *  the note above. Google refuses the whole payload over this, so a name that
+ *  does not fit costs every other service in the push as well. */
+export const MAX_SERVICE_NAME_LENGTH = 50
 
 /** Google's Weekday enum, indexed by JavaScript's own 0 = Sunday. */
 export const WEEKDAY_NAMES = [
