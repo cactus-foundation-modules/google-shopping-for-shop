@@ -108,6 +108,9 @@ export const workbenchCss = `
 .gsw-linkish:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:1px}
 .gsw-issues{display:flex;flex-wrap:wrap;gap:0.25rem}
 .gsw-issues .badge{font-size:0.6875rem;padding:2px 8px}
+.gsw-rule-notes{display:flex;flex-wrap:wrap;gap:0.25rem}
+.gsw-rule-notes .badge{font-size:0.6875rem;padding:2px 8px;white-space:normal;text-align:left}
+.gsw-table tbody tr.gsw-row.is-out td{background:var(--color-bg-subtle)}
 
 .gsw-google{display:grid;gap:0.375rem;font-size:0.8125rem}
 .gsw-gap{font-weight:600;font-variant-numeric:tabular-nums}

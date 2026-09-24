@@ -46,8 +46,14 @@ export async function getMerchantCentreLinks(productId: string): Promise<GsfMerc
     getProductData(productId),
     getEditorPayload(productId),
   ])
-  const base = { merchantId: settings.merchantId, feedOff: !settings.enabled, excluded: data.excluded }
-  if (data.excluded) return { ...base, links: [] }
+  // Known gap: only the owner's own "never send" is read here, not the feed
+  // rules. A product a rule keeps out still shows its Merchant Center links,
+  // which lead nowhere until somebody looks. Answering properly means asking
+  // whether ONE item is in the feed, and the only thing that knows today is a
+  // whole feed build; a later stage adds that one read and both this and the
+  // review feed use it.
+  const base = { merchantId: settings.merchantId, feedOff: !settings.enabled, excluded: data.feedChoice === 'exclude' }
+  if (data.feedChoice === 'exclude') return { ...base, links: [] }
 
   const enabled = (payload?.variants ?? []).filter((v) => v.enabled)
 

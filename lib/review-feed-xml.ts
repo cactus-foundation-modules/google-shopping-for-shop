@@ -19,8 +19,15 @@ export type ReviewFeedProduct = {
   /** Absolute URL of the product's own page. Required. */
   url: string
   name?: string
+  // All four lists are repeatable in the schema, and a listing sold in
+  // variations legitimately fills them several times over: one review is about
+  // the listing, and the listing is however many offers Google holds for it.
+  // Google matches the review against any one of them.
   gtins?: string[]
   mpns?: string[]
+  /** The ids the product feed publishes these offers under (`g:id`). Google's
+   *  secondary match, used where a GTIN or brand+MPN pair is missing. */
+  skus?: string[]
   brands?: string[]
 }
 
@@ -101,9 +108,12 @@ function idList(container: string, item: string, values: string[] | undefined, i
 }
 
 function renderProduct(product: ReviewFeedProduct): string {
+  // gtins, mpns, skus, brands - the xs:sequence order in productIdsType, and
+  // skus sits between mpns and brands rather than at the end.
   const ids = [
     idList('gtins', 'gtin', product.gtins, '            '),
     idList('mpns', 'mpn', product.mpns, '            '),
+    idList('skus', 'sku', product.skus, '            '),
     idList('brands', 'brand', product.brands, '            '),
   ].join('')
   // product_ids first, then the name, then the URL - the schema's order.

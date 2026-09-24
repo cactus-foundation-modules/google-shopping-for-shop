@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_WORKBENCH_QUERY,
+  hasWorkbenchParams,
   isFilteredQuery,
   parseWorkbenchQuery,
   parseWorkbenchQueryObject,
@@ -41,5 +42,31 @@ describe('workbench query', () => {
   it('counts filters, not preferences, as filtering', () => {
     expect(isFilteredQuery({ ...DEFAULT_WORKBENCH_QUERY, sort: 'title', perPage: 200, page: 5 })).toBe(false)
     expect(isFilteredQuery({ ...DEFAULT_WORKBENCH_QUERY, category: 'Desks' })).toBe(true)
+  })
+
+  it('recognises a link written before the sub-tabs existed', () => {
+    // Anything the list owns means "the products tab", however stale the link.
+    expect(hasWorkbenchParams(new URLSearchParams('tab=google-shopping-workbench&q=desk'))).toBe(true)
+    expect(hasWorkbenchParams(new URLSearchParams('tab=google-shopping-workbench&per=200'))).toBe(true)
+    expect(hasWorkbenchParams(new URLSearchParams('tab=google-shopping-workbench&listing=abc'))).toBe(true)
+    // The host page's own parameter, and our own sub-tab, are not ours to claim.
+    expect(hasWorkbenchParams(new URLSearchParams('tab=google-shopping-workbench'))).toBe(false)
+    expect(hasWorkbenchParams(new URLSearchParams('tab=google-shopping-workbench&sub=shipping'))).toBe(false)
+    expect(hasWorkbenchParams(new URLSearchParams(''))).toBe(false)
+  })
+})
+
+describe('feed and rule filters in the address bar', () => {
+  it('reads and writes them, leaving the defaults off', () => {
+    const query = parseWorkbenchQuery(new URLSearchParams('feed=out&rule=abc'))
+    expect(query.feed).toBe('out')
+    expect(query.rule).toBe('abc')
+    expect(isFilteredQuery(query)).toBe(true)
+    const written = writeWorkbenchQuery({ ...query, feed: 'in', rule: '' }, new URLSearchParams('tab=x&feed=out&rule=abc'))
+    expect(written.toString()).toBe('tab=x')
+  })
+
+  it('falls back to the feed as Google gets it for a value it does not know', () => {
+    expect(parseWorkbenchQuery(new URLSearchParams('feed=sideways')).feed).toBe('in')
   })
 })

@@ -23,6 +23,20 @@ function matchesPrice(view: WorkbenchView, price: PriceFilter): boolean {
   return price === 'all' || view.pricePosition === price
 }
 
+/** What Google makes of the item. 'none' is deliberately narrower than "not
+ *  any": an item Google has never reported on is not an item Google is happy
+ *  with, and lumping the two together would have a cold install claim a clean
+ *  bill of health for a catalogue nobody has checked. */
+function matchesGoogle(view: WorkbenchView, query: WorkbenchQuery): boolean {
+  if (query.googleCode !== '' && !(view.googleIssues?.codes.includes(query.googleCode) ?? false)) return false
+  switch (query.google) {
+    case 'all': return true
+    case 'any': return view.googleIssues !== null
+    case 'none': return view.googleIssues === null && view.checkedAt !== null
+    default: return view.googleIssues?.worst === query.google
+  }
+}
+
 /** One row against every filter in the query. Search is last: it is the only
  *  test that reads strings. */
 export function matchesWorkbenchQuery(view: WorkbenchView, query: WorkbenchQuery, terms: string[]): boolean {
@@ -35,6 +49,10 @@ export function matchesWorkbenchQuery(view: WorkbenchView, query: WorkbenchQuery
   if (query.brand !== '' && view.brand !== query.brand) return false
   if (query.category !== '' && !inCategory(view.productType, query.category)) return false
   if (query.group !== '' && view.groupId !== query.group && view.id !== query.group) return false
+  if (query.feed === 'in' && view.rules.feedStatus !== 'in') return false
+  if (query.feed === 'out' && view.rules.feedStatus === 'in') return false
+  if (query.rule !== '' && !view.rules.matched.some((ref) => ref.id === query.rule)) return false
+  if (!matchesGoogle(view, query)) return false
   return terms.every((term) => view.haystack.includes(term))
 }
 

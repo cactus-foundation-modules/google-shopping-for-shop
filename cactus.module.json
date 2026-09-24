@@ -1,13 +1,13 @@
 {
   "name": "google-shopping-for-shop",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "tablePrefix": "gsf_",
   "description": "Puts your shop on Google Shopping. Serves a product feed for Google Merchant Center in which every variation is its own listing - its own price, photos, stock and link - grouped under its parent product, so a search for the exact size and colour someone wants finds the exact size and colour you sell. Give Google the feed address once and it keeps itself up to date; brand and barcode details can be set per product, and anything you would rather keep off Google can sit the feed out. It also serves a review feed, so the star ratings customers leave here can show on your Google listings, and can offer Google's own survey on the order confirmation page for a seller rating.",
-  "requiresCoreVersion": "0.5.1584",
+  "requiresCoreVersion": "0.5.1676",
   "requiresModules": [
     {
       "name": "shop",
-      "minVersion": "0.1.401"
+      "minVersion": "0.1.452"
     },
     {
       "name": "shop-variations",
@@ -18,11 +18,41 @@
     {
       "name": "GOOGLE_SHOPPING_SERVICE_ACCOUNT_JSON",
       "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_CLIENT_ID",
+      "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_CLIENT_SECRET",
+      "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_REFRESH_TOKEN",
+      "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_CUSTOMER_ID",
+      "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+      "required": false
+    },
+    {
+      "name": "GOOGLE_ADS_DEVELOPER_TOKEN",
+      "required": false
     }
   ],
   "permissions": [],
   "navEntries": [],
-  "cookieCategories": [],
+  "cookieCategories": [
+    {
+      "key": "marketing",
+      "label": "Marketing",
+      "description": "Lets us see which adverts and Google listings led to an order, so we know what is worth paying for."
+    }
+  ],
   "cspOrigins": {
     "script": [
       "https://apis.google.com"
@@ -48,6 +78,11 @@
       "component": "GoogleShoppingSettingsTab"
     }
   ],
+  "emailTemplates": {
+    "groupLabel": "Google Shopping",
+    "import": "./lib/email-templates",
+    "export": "googleShoppingEmailTemplates"
+  },
   "extensionPoints": [
     {
       "point": "shop.product-editor-sections",
@@ -55,7 +90,7 @@
       "label": "Google Shopping",
       "order": 60,
       "permission": "shop.products",
-      "import": "./components/ProductGoogleShoppingSection",
+      "import": "./components/admin/ProductGoogleShoppingSection",
       "component": "ProductGoogleShoppingSection"
     },
     {
@@ -72,6 +107,27 @@
       "id": "google-shopping",
       "import": "./lib/merchant-facts-provider",
       "component": "googleShoppingMerchantFacts"
+    },
+    {
+      "point": "shop.order-paid",
+      "id": "google-shopping-attribution",
+      "import": "./lib/order-paid-observer",
+      "component": "googleShoppingOrderPaid"
+    },
+    {
+      "point": "shop.product-saved",
+      "id": "google-shopping-live-updates",
+      "import": "./lib/push/observer",
+      "component": "googleShoppingProductSaved"
+    },
+    {
+      "point": "shop.order-detail-panels",
+      "id": "google-shopping-click",
+      "label": "Came from Google",
+      "order": 70,
+      "permission": "shop.orders",
+      "import": "./components/admin/OrderGoogleClickPanel",
+      "component": "OrderGoogleClickPanel"
     }
   ],
   "puckBlocks": [
@@ -100,12 +156,36 @@
     "gsf_item_match_status",
     "gsf_item_match_history",
     "gsf_title_template_batches",
-    "gsf_title_template_batch_items"
+    "gsf_title_template_batch_items",
+    "gsf_change_log",
+    "gsf_feed_rules",
+    "gsf_item_issues",
+    "gsf_feed_fetch_status",
+    "gsf_promotion_windows",
+    "gsf_performance_daily",
+    "gsf_best_sellers",
+    "gsf_click_events",
+    "gsf_attributed_orders",
+    "gsf_beacon_rate",
+    "gsf_push_queue",
+    "gsf_push_state",
+    "gsf_push_run",
+    "gsf_ads_performance_daily",
+    "gsf_ads_conversion_uploads",
+    "gsf_ads_run"
   ],
   "cronJobs": [
     {
       "path": "/api/m/google-shopping-for-shop/cron/match-status",
       "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/m/google-shopping-for-shop/cron/push",
+      "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/m/google-shopping-for-shop/cron/ads",
+      "schedule": "40 * * * *"
     }
   ]
 }

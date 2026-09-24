@@ -47,6 +47,12 @@ export type FeedItem = {
   title: string
   description: string
   link: string
+  /** Where a PAID click is sent instead - the same page, tagged as paid
+   *  traffic. Google reads `ads_redirect` in preference to `link` for an ad and
+   *  ignores it everywhere else, so an item carrying one is reached at a
+   *  different address depending on what was clicked. Absent unless the owner
+   *  has switched link tagging on. */
+  adsRedirect?: string
   imageLinks: string[]
   availability: FeedAvailability
   /** The regular price, gross (VAT-inclusive), major units. */
@@ -101,6 +107,10 @@ export type FeedItem = {
    *  items. Google shows one promotion per listing, so an item is normally in
    *  exactly one; ten is their ceiling. */
   promotionIds?: string[]
+  /** Google's custom_label_0 to custom_label_4, by index, set by the owner's
+   *  feed rules to group items for bidding and reporting. Undefined slots are
+   *  left off; each value is already cut to Google's 100 characters. */
+  customLabels?: ReadonlyArray<string | undefined>
   axes?: FeedVariantAxes
 }
 
@@ -114,6 +124,7 @@ export type FeedChannel = {
 const TITLE_MAX = GOOGLE_TITLE_MAX
 const DESCRIPTION_MAX = 5000
 const SHIPPING_LABEL_MAX = 100
+const CUSTOM_LABEL_MAX = 100
 
 function escapeXml(s: string): string {
   return s
@@ -122,6 +133,14 @@ function escapeXml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
+}
+
+/** Cuts to `max` characters as a person counts them, not as UTF-16 stores
+ *  them: an emoji or any other astral character is one character and is never
+ *  left half-written, which would arrive at Google as a broken value. */
+export function clipCodePoints(value: string, max: number): string {
+  const characters = Array.from(value)
+  return characters.length <= max ? value : characters.slice(0, max).join('')
 }
 
 /** Trims to `max` characters, back to a word boundary when one is near. The
@@ -259,6 +278,7 @@ function renderItem(item: FeedItem): string {
     tag('g:title', clip(item.title, TITLE_MAX)),
     tag('g:description', clip(item.description, DESCRIPTION_MAX)),
     tag('g:link', item.link),
+    tag('g:ads_redirect', item.adsRedirect),
     tag('g:image_link', primary),
     // Google accepts at most ten additional images per item.
     ...rest.slice(0, 10).map((url) => tag('g:additional_image_link', url)),
@@ -277,6 +297,8 @@ function renderItem(item: FeedItem): string {
     tag('g:return_policy_label', item.returnPolicyLabel),
     // Google takes at most ten, and quietly ignores the source past that.
     ...(item.promotionIds ?? []).slice(0, 10).map((id) => tag('g:promotion_id', id)),
+    // Five slots and no more: Google has no custom_label_5.
+    ...(item.customLabels ?? []).slice(0, 5).map((label, slot) => tag(`g:custom_label_${slot}`, label === undefined ? undefined : clipCodePoints(label.trim(), CUSTOM_LABEL_MAX))),
     ...handlingAndTransit(item),
     ...shippingGroups(item, item.currency),
     // Only meaningful on the two availabilities where the shop has not got the

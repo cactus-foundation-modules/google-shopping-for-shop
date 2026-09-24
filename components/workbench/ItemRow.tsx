@@ -5,6 +5,7 @@
 // re-render the other two hundred.
 import { memo } from 'react'
 import { ISSUE_LABELS } from '@/modules/google-shopping-for-shop/lib/workbench-query'
+import { REPORTING_STATUS_LABELS, issueCodeLabel } from '@/modules/google-shopping-for-shop/lib/health/types'
 import type { WorkbenchRow } from '@/modules/google-shopping-for-shop/lib/workbench-view'
 import { TemplateEditor } from '@/modules/google-shopping-for-shop/components/workbench/TemplateEditor'
 import { MatchHistory, type HistoryState } from '@/modules/google-shopping-for-shop/components/workbench/MatchHistory'
@@ -44,6 +45,28 @@ function MatchBadge({ state }: { state: WorkbenchRow['matched'] }) {
   return <span className="badge badge-default">Not reported yet</span>
 }
 
+/** What Google itself says about the item: its overall verdict, and the
+ *  reasons behind it. Only drawn where Google has said something - an item it
+ *  has never reported on gets nothing rather than a reassuring blank. */
+function GoogleVerdict({ row }: { row: WorkbenchRow }) {
+  const status = row.reportingStatus
+  const issues = row.googleIssues
+  if (!status && !issues) return null
+  const tone = issues?.worst === 'disapproved' || status === 'not-eligible'
+    ? 'badge-error'
+    : issues?.worst === 'demoted' || status === 'limited'
+      ? 'badge-warning'
+      : 'badge-default'
+  return (
+    <div className="gsw-issues">
+      {status && <span className={`badge ${tone}`}>{REPORTING_STATUS_LABELS[status]}</span>}
+      {issues?.codes.map((code) => (
+        <span key={code} className="badge badge-default" title={`Google's own code: ${code}`}>{issueCodeLabel(code)}</span>
+      ))}
+    </div>
+  )
+}
+
 function PriceLine({ row }: { row: WorkbenchRow }) {
   const onSale = row.regularPrice > row.priceAmount
   return (
@@ -66,6 +89,27 @@ function PriceLine({ row }: { row: WorkbenchRow }) {
   )
 }
 
+/** What the feed rules and the owner's own choices did to this item, one
+ *  badge each, named after the rule that did it. */
+function RuleNotes({ row }: { row: WorkbenchRow }) {
+  const rules = row.rules
+  const notes: Array<{ key: string; tone: string; text: string }> = []
+  if (rules.feedStatus === 'rule' && rules.excludedBy) notes.push({ key: 'out', tone: 'badge-warning', text: `Excluded by rule: ${rules.excludedBy.name}` })
+  if (rules.feedStatus === 'hand') notes.push({ key: 'out', tone: 'badge-default', text: 'Kept out of the feed by hand' })
+  if (rules.keptInOverRule) notes.push({ key: 'kept', tone: 'badge-info', text: `Sent by hand, over the rule: ${rules.keptInOverRule.name}` })
+  for (const label of rules.labels) {
+    notes.push({ key: `label-${label.slot}`, tone: 'badge-info', text: `Label ${label.slot} "${label.value}" set by: ${label.rule.name}` })
+  }
+  if (row.titleFromRule) notes.push({ key: 'title', tone: 'badge-info', text: `Title set by: ${row.titleFromRule.name}` })
+  for (const note of rules.identifierNotes) notes.push({ key: `id-${note.text}`, tone: 'badge-info', text: `${note.text}, by: ${note.rule.name}` })
+  if (notes.length === 0) return null
+  return (
+    <div className="gsw-rule-notes">
+      {notes.map((note) => <span key={note.key} className={`badge ${note.tone}`}>{note.text}</span>)}
+    </div>
+  )
+}
+
 function ItemRowView(props: Props) {
   const { row, adminPath, selected, selectionLocked, draft, dirty, saving, historyOpen, history, listingShown } = props
   const editHref = `/${adminPath}/m/shop/products/${row.groupId ?? row.id}`
@@ -73,7 +117,7 @@ function ItemRowView(props: Props) {
 
   return (
     <>
-      <tr className={`gsw-row${selected ? ' is-selected' : ''}${dirty ? ' is-dirty' : ''}`}>
+      <tr className={`gsw-row${selected ? ' is-selected' : ''}${dirty ? ' is-dirty' : ''}${row.rules.feedStatus === 'in' ? '' : ' is-out'}`}>
         <td className="gsw-check">
           <input
             type="checkbox"
@@ -105,6 +149,7 @@ function ItemRowView(props: Props) {
                   </button>
                 </div>
               )}
+              <RuleNotes row={row} />
               {row.issues.length > 0 && (
                 <div className="gsw-issues">
                   {row.issues.map((code) => (
@@ -118,6 +163,7 @@ function ItemRowView(props: Props) {
         <td>
           <div className="gsw-google">
             <div><MatchBadge state={row.matched} /></div>
+            <GoogleVerdict row={row} />
             <PriceLine row={row} />
             {outOfDate && (
               <div className="gsw-held">

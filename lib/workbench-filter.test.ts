@@ -9,6 +9,7 @@ import {
   categoryLevels,
   summariseWorkbench,
   toWorkbenchRow,
+  NO_RULE_EFFECTS,
   type MatchSnapshot,
   type WorkbenchBaseItem,
 } from '@/modules/google-shopping-for-shop/lib/workbench-view'
@@ -35,6 +36,7 @@ function item(overrides: Partial<WorkbenchBaseItem> & { id: string }): Workbench
     imageUrl: '',
     url: 'https://example.test/p',
     searchText: '',
+    rules: NO_RULE_EFFECTS,
     ...overrides,
   }
   return { ...base, searchText: baseSearchText([base.id, base.originalTitle, base.sku, base.brand, base.productType]) }
@@ -43,7 +45,7 @@ function item(overrides: Partial<WorkbenchBaseItem> & { id: string }): Workbench
 const checkedAt = new Date('2026-09-18T05:30:00Z')
 
 function snapshot(overrides: Partial<MatchSnapshot> = {}): MatchSnapshot {
-  return { matched: true, merchantTitle: null, benchmarkAmountMicros: null, benchmarkCurrency: 'GBP', checkedAt, ...overrides }
+  return { matched: true, merchantTitle: null, benchmarkAmountMicros: null, benchmarkCurrency: 'GBP', reportingStatus: null, checkedAt, ...overrides }
 }
 
 function query(overrides: Partial<WorkbenchQuery> = {}): WorkbenchQuery {
@@ -100,6 +102,44 @@ describe('workbench view', () => {
   it('offers the first two category levels', () => {
     expect(categoryLevels('A > B > C')).toEqual(['A', 'A > B'])
     expect(categoryLevels('')).toEqual([])
+  })
+})
+
+describe('filtering by what Google says', () => {
+  // Three items and three different stories: one Google turned down, one it
+  // shows less often, one it has reported on and had nothing to say about -
+  // and one it has never reported on at all, which is the interesting case.
+  const views = [
+    buildWorkbenchView(item({ id: 'down', feedIndex: 0 }), undefined, snapshot({ reportingStatus: 'not-eligible' }), { worst: 'disapproved', codes: ['image_link_broken', 'missing_value'] }),
+    buildWorkbenchView(item({ id: 'demoted', feedIndex: 1 }), undefined, snapshot({ reportingStatus: 'limited' }), { worst: 'demoted', codes: ['missing_value'] }),
+    buildWorkbenchView(item({ id: 'fine', feedIndex: 2 }), undefined, snapshot({ reportingStatus: 'eligible' }), undefined),
+    buildWorkbenchView(item({ id: 'unasked', feedIndex: 3 }), undefined, undefined, undefined),
+  ]
+  const ids = (q: Partial<WorkbenchQuery>) => filterWorkbench(views, query(q)).map((v) => v.id)
+
+  it('filters by severity and by Google\'s own code', () => {
+    expect(ids({ google: 'any' })).toEqual(['down', 'demoted'])
+    expect(ids({ google: 'disapproved' })).toEqual(['down'])
+    expect(ids({ google: 'demoted' })).toEqual(['demoted'])
+    expect(ids({ googleCode: 'missing_value' })).toEqual(['down', 'demoted'])
+    expect(ids({ googleCode: 'image_link_broken' })).toEqual(['down'])
+  })
+
+  it('does not count an item nobody has asked about as one Google is happy with', () => {
+    expect(ids({ google: 'none' })).toEqual(['fine'])
+  })
+
+  it('puts Google\'s codes in the search index', () => {
+    expect(ids({ search: 'image_link_broken' })).toEqual(['down'])
+  })
+
+  it('counts items, not issues, and keeps the unasked out of both columns', () => {
+    const summary = summariseWorkbench(views)
+    expect(summary.google).toEqual({ any: 2, none: 1, disapproved: 1, demoted: 1, pending: 0 })
+    expect(summary.googleCodes).toEqual([
+      { value: 'missing_value', count: 2 },
+      { value: 'image_link_broken', count: 1 },
+    ])
   })
 })
 
@@ -160,5 +200,52 @@ describe('workbench filtering', () => {
     expect(summary.brands).toEqual([{ value: 'Acme', count: 2 }, { value: 'Birch & Co', count: 1 }])
     expect(summary.categories.map((c) => c.value)).toEqual(['Desks', 'Office Chairs', 'Office Chairs > Task Chairs'])
     expect(summary.lastCheckedAt).toBe(checkedAt.toISOString())
+  })
+})
+
+describe('feed rules on the workbench', () => {
+  const out = { id: 'r-out', name: 'Out' }
+  const label = { id: 'r-label', name: 'Label' }
+  const titled = { id: 'r-title', name: 'Titles' }
+  const views = [
+    buildWorkbenchView(item({ id: 'in', feedIndex: 0, rules: { ...NO_RULE_EFFECTS, labels: [{ slot: 0, value: 'sale', rule: label }], matched: [label] } }), undefined, undefined),
+    buildWorkbenchView(item({ id: 'ruled', feedIndex: 1, rules: { ...NO_RULE_EFFECTS, feedStatus: 'rule', excludedBy: out, matched: [out, label] } }), undefined, undefined),
+    buildWorkbenchView(item({ id: 'hand', feedIndex: 2, rules: { ...NO_RULE_EFFECTS, feedStatus: 'hand', manualChoice: 'exclude' } }), undefined, undefined),
+    buildWorkbenchView(item({ id: 'rule-title', feedIndex: 3, rules: { ...NO_RULE_EFFECTS, ruleTitle: { template: 'Rule <sku>', rule: titled }, matched: [titled] } }), undefined, undefined),
+    buildWorkbenchView(item({ id: 'own-title', feedIndex: 4, rules: { ...NO_RULE_EFFECTS, ruleTitle: { template: 'Rule <sku>', rule: titled }, matched: [titled] } }), 'Own <sku>', undefined),
+  ]
+  const ids = (query: Partial<WorkbenchQuery>) => filterWorkbench(views, { ...DEFAULT_WORKBENCH_QUERY, ...query }).map((view) => view.id)
+
+  it('shows only what goes to Google by default, and what is kept out when asked', () => {
+    expect(ids({})).toEqual(['in', 'rule-title', 'own-title'])
+    expect(ids({ feed: 'out' })).toEqual(['ruled', 'hand'])
+    expect(ids({ feed: 'all' })).toHaveLength(5)
+  })
+
+  it('narrows to the items a rule matches', () => {
+    expect(ids({ feed: 'all', rule: 'r-label' })).toEqual(['in', 'ruled'])
+    expect(ids({ rule: 'r-out' })).toEqual([])
+    expect(ids({ feed: 'all', rule: 'r-out' })).toEqual(['ruled'])
+  })
+
+  it("sends a rule's title only where the item has none of its own, and says whose it is", () => {
+    const ruleTitle = views.find((view) => view.id === 'rule-title')
+    const ownTitle = views.find((view) => view.id === 'own-title')
+    expect(ruleTitle?.renderedTitle).toBe('Rule SKU-rule-title')
+    expect(ruleTitle?.titleFromRule).toEqual(titled)
+    expect(ruleTitle?.titleTemplate).toBeNull()
+    expect(ownTitle?.renderedTitle).toBe('Own SKU-own-title')
+    expect(ownTitle?.titleFromRule).toBeNull()
+  })
+
+  it('counts the tiles over the feed only, and each rule over everything it matches', () => {
+    const summary = summariseWorkbench(views)
+    expect(summary.total).toBe(3)
+    expect(summary.outOfFeed).toEqual({ rule: 1, hand: 1 })
+    expect(summary.rules).toEqual([
+      { id: 'r-label', name: 'Label', count: 2 },
+      { id: 'r-out', name: 'Out', count: 1 },
+      { id: 'r-title', name: 'Titles', count: 2 },
+    ])
   })
 })

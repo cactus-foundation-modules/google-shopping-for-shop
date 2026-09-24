@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { readFileSync, readdirSync } from 'fs'
 import path from 'path'
 import { PrismaClient } from '@prisma/client'
@@ -24,12 +24,17 @@ import { splitMigrationStatements } from '@/lib/backup/migration-sql'
 // DATABASE_URL points at the throwaway database.
 const cfg = (() => { try { return vpsConfigFromEnv() } catch { return null } })()
 
+// See lib/feed-rules-sql.test.ts: these are round trips to a remote database,
+// and the default five seconds is a local-database figure.
+vi.setConfig({ testTimeout: 30_000 })
+
 // Past one write/log chunk (2,500), so the chunking itself is exercised.
 const CATALOGUE = 2600
 
 type ChangesModule = typeof import('@/modules/google-shopping-for-shop/lib/title-template-changes')
 type TemplatesModule = typeof import('@/modules/google-shopping-for-shop/lib/title-templates')
 type TablesModule = typeof import('@/modules/google-shopping-for-shop/lib/workbench-tables')
+type ChangeLogModule = typeof import('@/modules/google-shopping-for-shop/lib/change-log')
 
 describe.skipIf(!cfg)('google-shopping workbench SQL against a real database', () => {
   let db: PrismaClient
@@ -38,6 +43,7 @@ describe.skipIf(!cfg)('google-shopping workbench SQL against a real database', (
   let changes: ChangesModule
   let templates: TemplatesModule
   let tables: TablesModule
+  let changeLog: ChangeLogModule
 
   const meta = { summarise: (changed: number) => `Edited ${changed}`, createdBy: 'Workbench test' }
 
@@ -74,6 +80,7 @@ describe.skipIf(!cfg)('google-shopping workbench SQL against a real database', (
     changes = await import('@/modules/google-shopping-for-shop/lib/title-template-changes')
     templates = await import('@/modules/google-shopping-for-shop/lib/title-templates')
     tables = await import('@/modules/google-shopping-for-shop/lib/workbench-tables')
+    changeLog = await import('@/modules/google-shopping-for-shop/lib/change-log')
   }, 300_000)
 
   afterAll(async () => {
@@ -198,4 +205,155 @@ describe.skipIf(!cfg)('google-shopping workbench SQL against a real database', (
     await db.$executeRaw`UPDATE "gsf_item_match_status" SET "merchant_title" = 'Renamed' WHERE "item_id" = 'p5'`
     expect((await tables.readWorkbenchFingerprints()).snapshots).not.toBe(reported.snapshots)
   })
+
+  // ----- The general change log (migration 016) -----------------------------
+  // Its own table, its own undo, and nothing to do with the title template
+  // batches above: one line per change, with a before and an after the area
+  // that wrote it decides the shape of.
+
+  it('016 creates the general change log, and survives being applied twice', async () => {
+    const sql = readFileSync(path.join(process.cwd(), 'modules/google-shopping-for-shop/migrations/016_change_log.sql'), 'utf8')
+    for (const statement of splitMigrationStatements(sql)) await db.$executeRawUnsafe(statement)
+    const found = await db.$queryRaw<Array<{ table_name: string }>>`
+      SELECT "table_name" FROM information_schema.tables WHERE "table_name" = 'gsf_change_log'
+    `
+    expect(found).toHaveLength(1)
+    const indexes = await db.$queryRaw<Array<{ indexname: string }>>`
+      SELECT "indexname" FROM pg_indexes WHERE "tablename" = 'gsf_change_log' ORDER BY "indexname"
+    `
+    expect(indexes.map((row) => row.indexname)).toContain('gsf_change_log_area_created_idx')
+  })
+
+  it('writes jsonb snapshots and reads them back as the shapes they went in as', async () => {
+    const id = await changeLog.recordChange({
+      area: 'feed-rules',
+      action: 'update',
+      summary: 'Turned on the rule "Clearance"',
+      // Deliberately awkward: an object, an array, a bare scalar and a null all
+      // go into the same jsonb column, and a JS array here must NOT be written
+      // as a Postgres array literal.
+      before: { enabled: false, labels: [], note: null },
+      after: { enabled: true, labels: ['a', 'b'], note: "O'Brien" },
+      createdBy: 'Workbench test',
+    })
+    expect(id).toBeTruthy()
+
+    const entry = await changeLog.getChange(id)
+    expect(entry).toMatchObject({ area: 'feed-rules', action: 'update', summary: 'Turned on the rule "Clearance"', createdBy: 'Workbench test', undoneAt: null })
+    expect(entry?.before).toEqual({ enabled: false, labels: [], note: null })
+    expect(entry?.after).toEqual({ enabled: true, labels: ['a', 'b'], note: "O'Brien" })
+    expect(entry?.createdAt).toBeInstanceOf(Date)
+
+    // A change with nothing before it leaves the column NULL rather than the
+    // JSON document `null`, which is a different thing in jsonb.
+    const created = await changeLog.recordChange({ area: 'shipping', action: 'create', summary: 'Sent delivery settings', after: [1, 2, 3], createdBy: null })
+    const nulls = await db.$queryRaw<Array<{ before_is_null: boolean }>>`
+      SELECT ("before" IS NULL) AS "before_is_null" FROM "gsf_change_log" WHERE "id" = ${created}
+    `
+    expect(nulls[0]?.before_is_null).toBe(true)
+    expect((await changeLog.getChange(created))?.after).toEqual([1, 2, 3])
+    expect(await changeLog.getChange('no-such-entry')).toBeNull()
+  })
+
+  it('lists one area or all of them, newest first', async () => {
+    const all = await changeLog.listChanges({ limit: 50 })
+    expect(all.length).toBeGreaterThanOrEqual(2)
+    expect(all[0]?.area).toBe('shipping')
+
+    const rules = await changeLog.listChanges({ area: 'feed-rules', limit: 50 })
+    expect(rules.every((entry) => entry.area === 'feed-rules')).toBe(true)
+    expect(rules.some((entry) => entry.summary === 'Turned on the rule "Clearance"')).toBe(true)
+  })
+
+  it('refuses to undo an area that has registered no handler', async () => {
+    const id = await changeLog.recordChange({ area: 'products', action: 'update', summary: 'Something', before: { a: 1 }, after: { a: 2 }, createdBy: null })
+    expect(await changeLog.undoChange(id, null)).toEqual({ status: 'not-undoable' })
+    // And it stays un-undone, so a handler arriving later can still put it back.
+    expect((await changeLog.getChange(id))?.undoneAt).toBeNull()
+  })
+
+  it('undoes through the area handler, once, and records the undo as its own entry', async () => {
+    // Stands in for a real area: the handler is handed the entry and the open
+    // transaction, and says what it managed to put back.
+    const seen: Array<{ before: unknown; after: unknown }> = []
+    changeLog.registerUndoHandler('settings', async ({ entry, tx }) => {
+      seen.push({ before: entry.before, after: entry.after })
+      // Proves the handler really is inside the transaction it was given.
+      await tx.$executeRaw`SELECT 1`
+      return { restored: 2, skipped: 1 }
+    })
+
+    const id = await changeLog.recordChange({
+      area: 'settings',
+      action: 'update',
+      summary: 'Turned on delivery charges',
+      before: { sendDeliveryOptions: false },
+      after: { sendDeliveryOptions: true },
+      createdBy: 'Workbench test',
+    })
+
+    const outcome = await changeLog.undoChange(id, 'Someone else')
+    expect(outcome).toMatchObject({ status: 'undone', restored: 2, skipped: 1 })
+    expect(seen).toEqual([{ before: { sendDeliveryOptions: false }, after: { sendDeliveryOptions: true } }])
+    expect((await changeLog.getChange(id))?.undoneAt).toBeInstanceOf(Date)
+
+    const undoEntry = await changeLog.getChange((outcome as { entryId: string }).entryId)
+    expect(undoEntry).toMatchObject({ area: 'settings', action: 'undo', summary: 'Undid "Turned on delivery charges"', createdBy: 'Someone else' })
+    // The undo took away what the change put in, so the pair reads round the
+    // other way - which is what makes an undo undoable in its turn.
+    expect(undoEntry?.before).toEqual({ sendDeliveryOptions: true })
+    expect(undoEntry?.after).toEqual({ sendDeliveryOptions: false })
+
+    expect(await changeLog.undoChange(id, null)).toEqual({ status: 'already-undone' })
+    expect(await changeLog.undoChange('no-such-entry', null)).toEqual({ status: 'not-found' })
+    expect(changeLog.canUndoArea('settings')).toBe(true)
+
+    // Undo the undo: the handler is handed the undo entry, whose pair is the
+    // original's swapped round - so it sees "put delivery charges back on".
+    const redo = await changeLog.undoChange(undoEntry!.id, 'Workbench test')
+    expect(redo).toMatchObject({ status: 'undone', restored: 2, skipped: 1 })
+    expect(seen[1]).toEqual({ before: { sendDeliveryOptions: true }, after: { sendDeliveryOptions: false } })
+    const redoEntry = await changeLog.getChange((redo as { entryId: string }).entryId)
+    expect(redoEntry).toMatchObject({ action: 'undo', summary: 'Undid "Undid \"Turned on delivery charges\""' })
+    expect(redoEntry?.before).toEqual({ sendDeliveryOptions: false })
+    expect(redoEntry?.after).toEqual({ sendDeliveryOptions: true })
+  })
+
+  it('leaves the entry alone when the handler throws', async () => {
+    // A different area from the no-handler test above, which must keep having
+    // no handler however these are ordered.
+    changeLog.registerUndoHandler('feed-rules', async () => { throw new Error('the rule is gone') })
+    const id = await changeLog.recordChange({ area: 'feed-rules', action: 'update', summary: 'Doomed', createdBy: null })
+    await expect(changeLog.undoChange(id, null)).rejects.toThrow('the rule is gone')
+    expect((await changeLog.getChange(id))?.undoneAt).toBeNull()
+  })
+
+  it('prunes each area to its own window, and drops anything too old', async () => {
+    // Straight into the table: the pruning window is 200 an area, and 200
+    // separate transactions over the wire would test nothing extra.
+    await db.$executeRaw`
+      INSERT INTO "gsf_change_log" ("area", "action", "summary", "created_at")
+      SELECT 'feed-rules', 'update', 'Bulk ' || g, CURRENT_TIMESTAMP - make_interval(mins => g)
+      FROM generate_series(1, 260::int) AS g
+    `
+    await db.$executeRaw`
+      INSERT INTO "gsf_change_log" ("area", "action", "summary", "created_at")
+      VALUES ('shipping', 'push', 'Ancient', CURRENT_TIMESTAMP - make_interval(days => 500))
+    `
+    const shippingBefore = await changeLog.listChanges({ area: 'shipping', limit: 500 })
+
+    await changeLog.pruneChangeLog()
+
+    const rules = await changeLog.listChanges({ area: 'feed-rules', limit: 500 })
+    expect(rules).toHaveLength(200)
+    // The newest survive; the oldest are the ones that go.
+    expect(rules.some((entry) => entry.summary === 'Bulk 1')).toBe(true)
+    expect(rules.some((entry) => entry.summary === 'Bulk 260')).toBe(false)
+
+    const shipping = await changeLog.listChanges({ area: 'shipping', limit: 500 })
+    expect(shipping.some((entry) => entry.summary === 'Ancient')).toBe(false)
+    // A quiet area keeps everything else it had: one busy area cannot push
+    // another's history out.
+    expect(shipping.length).toBe(shippingBefore.length - 1)
+  }, 120_000)
 })

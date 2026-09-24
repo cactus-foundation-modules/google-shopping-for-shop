@@ -16,6 +16,13 @@ const MC_ITEM_URL = 'https://merchants.google.com/mc/items/details'
 
 // Every page of the platform renders in English (app/layout.tsx), so the feed
 // only ever has one content language to declare.
+//
+// Kept as a constant here on purpose: this file is pure and reads nothing, and
+// it builds a CONSOLE address rather than an API resource name - a wrong one
+// costs a link that finds nothing, not a silent write to a product that does
+// not exist. The shop's real answer lives in `gsf_settings.content_language`
+// (added with the live updates, migration 024), and the day it is ever
+// anything but 'en' this takes it as an argument and the two move together.
 const CONTENT_LANGUAGE = 'en'
 
 /** The console's page for one item. */

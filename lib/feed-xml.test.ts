@@ -30,6 +30,21 @@ describe('buildFeedXml', () => {
     expect(xml).not.toContain('<g:sale_price>')
   })
 
+  it('renders the paid address only when there is one, and escapes it', () => {
+    const plain = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [baseItem])
+    expect(plain).not.toContain('<g:ads_redirect>')
+
+    const tagged = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [
+      {
+        ...baseItem,
+        link: 'https://example.test/a-desk?colour=black&utm_source=google&utm_medium=free_listing&utm_campaign=shopping',
+        adsRedirect: 'https://example.test/a-desk?colour=black&utm_source=google&utm_medium=cpc&utm_campaign=shopping',
+      },
+    ])
+    expect(tagged).toContain('<g:link>https://example.test/a-desk?colour=black&amp;utm_source=google&amp;utm_medium=free_listing&amp;utm_campaign=shopping</g:link>')
+    expect(tagged).toContain('<g:ads_redirect>https://example.test/a-desk?colour=black&amp;utm_source=google&amp;utm_medium=cpc&amp;utm_campaign=shopping</g:ads_redirect>')
+  })
+
   it('escapes XML entities everywhere a value lands', () => {
     const xml = buildFeedXml({ title: 'Feed', link: 'https://example.test', description: 'd' }, [
       { ...baseItem, title: 'Desk & Chair <"Bundle">', productType: "Office > Desks & 'Tables'" },
@@ -243,5 +258,48 @@ describe('return policy label', () => {
 
   it('leaves the attribute off an item without one', () => {
     expect(buildFeedXml(channel, [baseItem])).not.toContain('<g:return_policy_label>')
+  })
+})
+
+describe('custom labels', () => {
+  const channel = { title: 'Feed', link: 'https://example.test', description: 'd' }
+
+  it('renders each filled slot as its own custom_label_N, and leaves the empty ones off', () => {
+    const xml = buildFeedXml(channel, [{ ...baseItem, customLabels: ['clearance', undefined, 'made to order', undefined, 'q4'] }])
+    expect(xml).toContain('<g:custom_label_0>clearance</g:custom_label_0>')
+    expect(xml).not.toContain('custom_label_1')
+    expect(xml).toContain('<g:custom_label_2>made to order</g:custom_label_2>')
+    expect(xml).not.toContain('custom_label_3')
+    expect(xml).toContain('<g:custom_label_4>q4</g:custom_label_4>')
+  })
+
+  it('sends nothing at all for an item no label rule touched', () => {
+    const xml = buildFeedXml(channel, [baseItem])
+    expect(xml).not.toContain('custom_label')
+  })
+
+  it('escapes the value, cuts it to 100 characters and never invents a sixth slot', () => {
+    const long = 'x'.repeat(140)
+    const xml = buildFeedXml(channel, [{ ...baseItem, customLabels: ['Tables & <Desks>', long, undefined, undefined, undefined, 'six'] }])
+    expect(xml).toContain('<g:custom_label_0>Tables &amp; &lt;Desks&gt;</g:custom_label_0>')
+    expect(xml).toContain(`<g:custom_label_1>${'x'.repeat(100)}</g:custom_label_1>`)
+    expect(xml).not.toContain('custom_label_5')
+    expect(xml).not.toContain('six')
+  })
+
+  it('cuts a long label on whole characters, never half an emoji', () => {
+    // 60 astral characters: 120 UTF-16 units, so a naive cut at 100 would
+    // split the 51st in half and hand Google a lone surrogate.
+    const emoji = '\u{1F4CE}'.repeat(60)
+    const xml = buildFeedXml(channel, [{ ...baseItem, customLabels: [emoji] }])
+    const rendered = /<g:custom_label_0>([\s\S]*?)<\/g:custom_label_0>/.exec(xml)?.[1] ?? ''
+    expect(Array.from(rendered)).toHaveLength(60)
+    expect(rendered.codePointAt(rendered.length - 2)).toBe(0x1F4CE)
+    expect(/[\uD800-\uDFFF]/.test(rendered.replace(/\uD83D\uDCCE/g, ''))).toBe(false)
+  })
+
+  it('treats a blank label as no label', () => {
+    const xml = buildFeedXml(channel, [{ ...baseItem, customLabels: ['   '] }])
+    expect(xml).not.toContain('custom_label')
   })
 })

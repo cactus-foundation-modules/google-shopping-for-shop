@@ -8,6 +8,43 @@
 import { clip, type FeedAvailability } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { GOOGLE_TITLE_MAX, renderTitleTemplate, type TitleTemplateContext } from '@/modules/google-shopping-for-shop/lib/title-template-render'
 import { ISSUE_CODES, type IssueCode } from '@/modules/google-shopping-for-shop/lib/workbench-query'
+import type { ItemIssueSummary } from '@/modules/google-shopping-for-shop/lib/health/item-issues'
+import type { IssueSeverity, ReportingStatus } from '@/modules/google-shopping-for-shop/lib/health/types'
+import type { CustomLabelSlot, RuleRef } from '@/modules/google-shopping-for-shop/lib/feed-rules/types'
+import type { ManualChoice } from '@/modules/google-shopping-for-shop/lib/feed-rules/evaluate'
+
+/** Whether the item goes to Google: 'in' it does; 'rule' a feed rule keeps it
+ *  out; 'hand' the owner's own "never send" on the product or variation does. */
+export type FeedStatus = 'in' | 'rule' | 'hand'
+
+/** What the feed rules did to one item, for the row to say so. */
+export type RuleEffects = {
+  feedStatus: FeedStatus
+  /** The Exclude rule keeping it out, when feedStatus is 'rule'. */
+  excludedBy: RuleRef | null
+  /** An Exclude rule matched, and the owner's own "always send" beat it. */
+  keptInOverRule: RuleRef | null
+  /** The owner's own say on this item, after a variation defers to its listing. */
+  manualChoice: ManualChoice
+  labels: Array<{ slot: CustomLabelSlot; value: string; rule: RuleRef }>
+  /** The template a rule sends, when the item has none of its own. */
+  ruleTitle: { template: string; rule: RuleRef } | null
+  /** Identifier changes a rule made, in the owner's words. */
+  identifierNotes: Array<{ text: string; rule: RuleRef }>
+  /** Every switched-on rule the item meets, list order, for "filter by rule". */
+  matched: RuleRef[]
+}
+
+export const NO_RULE_EFFECTS: RuleEffects = {
+  feedStatus: 'in',
+  excludedBy: null,
+  keptInOverRule: null,
+  manualChoice: 'rules',
+  labels: [],
+  ruleTitle: null,
+  identifierNotes: [],
+  matched: [],
+}
 
 /** The catalogue half of a row: everything the feed build decides. Cached
  *  between requests, so it holds nothing the owner can change from the
@@ -43,6 +80,7 @@ export type WorkbenchBaseItem = {
   url: string
   /** Lower-cased search text from the fields above. */
   searchText: string
+  rules: RuleEffects
 }
 
 /** Google's last report on one item, as gsf_item_match_status holds it. */
@@ -51,6 +89,9 @@ export type MatchSnapshot = {
   merchantTitle: string | null
   benchmarkAmountMicros: string | null
   benchmarkCurrency: string | null
+  /** Google's overall verdict. Null on a row written before this column
+   *  existed, which reads the same as "no word yet" and never as "fine". */
+  reportingStatus: ReportingStatus | null
   checkedAt: Date
 }
 
@@ -59,7 +100,12 @@ export type MatchState = 'matched' | 'unmatched' | 'unknown'
 export type PricePosition = 'dearer' | 'cheaper' | 'level' | 'no-benchmark'
 
 export type WorkbenchView = WorkbenchBaseItem & {
+  /** The item's own template, as typed on this screen. A rule's template is
+   *  not this: it is `rules.ruleTitle`, and only applies when this is null. */
   titleTemplate: string | null
+  /** The rule whose template the feed is sending, when the item has none of
+   *  its own. */
+  titleFromRule: RuleRef | null
   /** The title the feed sends today. */
   renderedTitle: string
   unknownTokens: string[]
@@ -75,6 +121,12 @@ export type WorkbenchView = WorkbenchBaseItem & {
   pricePosition: PricePosition
   checkedAt: string | null
   issues: IssueCode[]
+  /** Google's own verdict, null where Google has not reported on this item. */
+  reportingStatus: ReportingStatus | null
+  /** Google's open issues against this item: the worst severity and every
+   *  code. Null where Google has reported nothing against it - which is not
+   *  the same as Google never having looked. */
+  googleIssues: { worst: IssueSeverity; codes: string[] } | null
   /** searchText plus the parts that change between requests. */
   haystack: string
 }
@@ -87,14 +139,28 @@ export type WorkbenchRow = Omit<WorkbenchView, 'searchText' | 'haystack' | 'feed
 
 export type FacetCount = { value: string; count: number }
 
+export type RuleFacet = { id: string; name: string; count: number }
+
 export type WorkbenchSummary = {
+  /** Items going to Google. Everything below counts these only, apart from
+   *  `outOfFeed` and `rules`. */
   total: number
+  /** Items built and then kept out: by a rule, or by the owner's own choice. */
+  outOfFeed: { rule: number; hand: number }
+  /** Each rule and how many items it touches, in or out of the feed. */
+  rules: RuleFacet[]
   matched: number
   unmatched: number
   unknown: number
   overridden: number
   anyIssue: number
   issues: Record<IssueCode, number>
+  /** Items by what GOOGLE makes of them. `none` counts items Google has
+   *  reported on and had nothing to say about; items Google has never
+   *  reported on are in neither. */
+  google: { any: number; none: number; disapproved: number; demoted: number; pending: number }
+  /** Google's issue codes across the feed, most items first. */
+  googleCodes: FacetCount[]
   prices: Record<PricePosition, number>
   /** Most common first. */
   brands: FacetCount[]
@@ -138,15 +204,22 @@ function issuesOf(item: WorkbenchBaseItem, renderedTitle: string, unknownTokens:
   return ISSUE_CODES.filter((code) => found[code])
 }
 
-export function buildWorkbenchView(item: WorkbenchBaseItem, template: string | undefined, snapshot: MatchSnapshot | undefined): WorkbenchView {
+export function buildWorkbenchView(
+  item: WorkbenchBaseItem,
+  template: string | undefined,
+  snapshot: MatchSnapshot | undefined,
+  googleIssues?: ItemIssueSummary | undefined,
+): WorkbenchView {
   const titleTemplate = template?.trim() || null
-  const rendered = renderTitleTemplate(titleTemplate, item.context, item.originalTitle)
+  const ruleTitle = titleTemplate === null ? item.rules.ruleTitle : null
+  const rendered = renderTitleTemplate(titleTemplate ?? ruleTitle?.template, item.context, item.originalTitle)
   const merchantTitle = snapshot?.merchantTitle?.trim() ?? ''
   const benchmarkAmount = benchmarkOf(snapshot, item.currency)
   const gapPercent = benchmarkAmount === null ? null : Math.round(((item.priceAmount - benchmarkAmount) / benchmarkAmount) * 100)
   return {
     ...item,
     titleTemplate,
+    titleFromRule: ruleTitle?.rule ?? null,
     renderedTitle: rendered.title,
     unknownTokens: rendered.unknownTokens,
     matched: snapshot === undefined ? 'unknown' : snapshot.matched ? 'matched' : 'unmatched',
@@ -158,7 +231,17 @@ export function buildWorkbenchView(item: WorkbenchBaseItem, template: string | u
     pricePosition: pricePositionOf(gapPercent),
     checkedAt: snapshot?.checkedAt.toISOString() ?? null,
     issues: issuesOf(item, rendered.title, rendered.unknownTokens, merchantTitle),
-    haystack: [item.searchText, rendered.title.toLowerCase(), merchantTitle.toLowerCase(), titleTemplate?.toLowerCase() ?? ''].join('\n'),
+    reportingStatus: snapshot?.reportingStatus ?? null,
+    googleIssues: googleIssues ?? null,
+    // Google's issue codes go in the search index, so typing "image_link_broken"
+    // into the box finds exactly the items it is open against.
+    haystack: [
+      item.searchText,
+      rendered.title.toLowerCase(),
+      merchantTitle.toLowerCase(),
+      titleTemplate?.toLowerCase() ?? '',
+      googleIssues?.codes.join(' ').toLowerCase() ?? '',
+    ].join('\n'),
   }
 }
 
@@ -184,8 +267,22 @@ export function categoryLevels(productType: string): string[] {
   return parts.slice(0, 2).map((_part, index) => parts.slice(0, index + 1).join(' > '))
 }
 
-export function summariseWorkbench(views: WorkbenchView[]): WorkbenchSummary {
+export function summariseWorkbench(allViews: WorkbenchView[]): WorkbenchSummary {
+  const outOfFeed = { rule: 0, hand: 0 }
+  const ruleCounts = new Map<string, RuleFacet>()
+  const views: WorkbenchView[] = []
+  for (const view of allViews) {
+    if (view.rules.feedStatus === 'in') views.push(view)
+    else outOfFeed[view.rules.feedStatus]++
+    for (const ref of view.rules.matched) {
+      const facet = ruleCounts.get(ref.id)
+      if (facet) facet.count++
+      else ruleCounts.set(ref.id, { id: ref.id, name: ref.name, count: 1 })
+    }
+  }
   const issues: Record<IssueCode, number> = { 'unknown-token': 0, 'too-long': 0, 'out-of-date': 0, 'no-gtin': 0, 'no-brand': 0, 'no-identifiers': 0 }
+  const google = { any: 0, none: 0, disapproved: 0, demoted: 0, pending: 0 }
+  const googleCodeCounts = new Map<string, number>()
   const prices: Record<PricePosition, number> = { dearer: 0, cheaper: 0, level: 0, 'no-benchmark': 0 }
   let matched = 0
   let unmatched = 0
@@ -198,6 +295,16 @@ export function summariseWorkbench(views: WorkbenchView[]): WorkbenchSummary {
     if (view.titleTemplate !== null) overridden++
     if (view.issues.length > 0) anyIssue++
     for (const code of view.issues) issues[code]++
+    if (view.googleIssues) {
+      google.any++
+      // 'unknown' is a severity Google sent that we do not recognise; it is
+      // counted as a problem but sits in none of the three named buckets
+      // rather than being filed under a guess.
+      if (view.googleIssues.worst !== 'unknown') google[view.googleIssues.worst]++
+      for (const code of view.googleIssues.codes) googleCodeCounts.set(code, (googleCodeCounts.get(code) ?? 0) + 1)
+    } else if (view.checkedAt !== null) {
+      google.none++
+    }
     prices[view.pricePosition]++
     if (view.checkedAt && (lastCheckedAt === null || view.checkedAt > lastCheckedAt)) lastCheckedAt = view.checkedAt
   }
@@ -207,14 +314,21 @@ export function summariseWorkbench(views: WorkbenchView[]): WorkbenchSummary {
   const categories = [...countBy(views.flatMap((view) => categoryLevels(view.productType)))]
     .map(([value, count]) => ({ value, count }))
     .sort((a, b) => a.value.localeCompare(b.value))
+  const googleCodes = [...googleCodeCounts]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
   return {
     total: views.length,
+    outOfFeed,
+    rules: [...ruleCounts.values()].sort((a, b) => a.name.localeCompare(b.name)),
     matched,
     unmatched,
     unknown: views.length - matched - unmatched,
     overridden,
     anyIssue,
     issues,
+    google,
+    googleCodes,
     prices,
     brands,
     categories,

@@ -62,7 +62,10 @@ export async function GET(request: NextRequest) {
       // Worked out here so the browser can say "read 3 minutes ago" without a clock of its own.
       ageSeconds: Math.max(0, Math.round((Date.now() - state.catalogueReadAt.getTime()) / 1000)),
       stale: state.catalogueStale,
-      items: state.views.length,
+      // What goes to Google. Rows kept out (by a rule or by hand) are in the
+      // list too, behind the feed filter, and counted on their own.
+      items: state.summary.total,
+      outOfFeed: state.summary.outOfFeed.rule + state.summary.outOfFeed.hand,
       withheld: state.withheldCount,
     },
     canRefresh,

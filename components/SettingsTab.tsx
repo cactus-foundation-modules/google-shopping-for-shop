@@ -3,8 +3,10 @@
 // Sub-tab of shop's settings tab, hosted through 'shop.settings-sub-tabs'.
 // Shop lends the space and nothing else: own fetch, own save, own module API.
 import { useCallback, useEffect, useState } from 'react'
-import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
+import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfLabelSource, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
+import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components/GoogleAccessCheck'
+import { AdsSettingsSection } from '@/modules/google-shopping-for-shop/components/AdsSettingsSection'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -62,6 +64,9 @@ export function GoogleShoppingSettingsTab() {
   const [savedCredential, setSavedCredential] = useState(false)
   const [copied, setCopied] = useState<'products' | 'reviews' | 'promotions' | null>(null)
   const [finePrintDraft, setFinePrintDraft] = useState('')
+  const [thresholdDraft, setThresholdDraft] = useState('')
+  const [alertEmailDraft, setAlertEmailDraft] = useState('')
+  const [dataSourceDraft, setDataSourceDraft] = useState('')
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
@@ -78,6 +83,9 @@ export function GoogleShoppingSettingsTab() {
       setCountryDraft(body.settings.shippingCountry)
       setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
       setFinePrintDraft(body.settings.promotionsFinePrint)
+      setThresholdDraft(String(body.settings.disapprovalAlertThreshold))
+      setAlertEmailDraft(body.settings.alertEmail)
+      setDataSourceDraft(body.settings.feedDataSourceId)
     } catch {
       setError('Could not load Google Shopping settings.')
     }
@@ -94,7 +102,7 @@ export function GoogleShoppingSettingsTab() {
     return () => { cancelled = true }
   }, [load])
 
-  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; mpnFromSku?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; promotionsFeedEnabled?: boolean; promotionsFinePrint?: string; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; regenerateToken?: boolean }) {
+  async function save(patch: { enabled?: boolean; defaultBrand?: string; brandFromSupplier?: boolean; mpnFromSku?: boolean; defaultCondition?: GsfCondition; merchantId?: string; feedLabel?: string; sendDeliveryOptions?: boolean; shippingCountry?: string; shippingLabelAttributeId?: string; shippingLabelSource?: GsfLabelSource; returnPolicyLabelsEnabled?: boolean; parentImagesOnVariations?: boolean; reviewsFeedEnabled?: boolean; promotionsFeedEnabled?: boolean; promotionsFinePrint?: string; customerReviewsEnabled?: boolean; customerReviewsStyle?: GsfOptInStyle; customerReviewsDeliveryDays?: number; feedDataSourceId?: string; disapprovalAlertThreshold?: number; alertEmailEnabled?: boolean; alertEmail?: string; regenerateToken?: boolean; reissuePromotion?: string }) {
     setSaving(true)
     setSaved(false)
     setError('')
@@ -113,6 +121,9 @@ export function GoogleShoppingSettingsTab() {
       setCountryDraft(body.settings.shippingCountry)
       setDeliveryDaysDraft(String(body.settings.customerReviewsDeliveryDays))
       setFinePrintDraft(body.settings.promotionsFinePrint)
+      setThresholdDraft(String(body.settings.disapprovalAlertThreshold))
+      setAlertEmailDraft(body.settings.alertEmail)
+      setDataSourceDraft(body.settings.feedDataSourceId)
       setSaved(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -339,6 +350,126 @@ export function GoogleShoppingSettingsTab() {
           >
             {savingCredential ? 'Saving…' : savedCredential ? 'Saved' : 'Save API key'}
           </button>
+          <GoogleAccessCheck />
+        </div>
+
+        {/* Google Ads: a different account, a different sign-in, and the one
+            thing an owner most often assumes the key above already covers. */}
+        <AdsSettingsSection />
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Health checks and alerts</h3>
+        <span style={hint}>
+          Once a day Cactus asks Google what it makes of your products and whether it managed to read your feed at all. What comes
+          back is on the Google Shopping tab under Products, in Health. These two settings decide when it is worth interrupting you
+          about it.
+        </span>
+
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Tell me when this many products stop being shown at once</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              value={thresholdDraft}
+              onChange={(e) => setThresholdDraft(e.target.value)}
+              style={{ ...inputStyle, maxWidth: 140 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={saving || Number(thresholdDraft) === settings.disapprovalAlertThreshold || thresholdDraft.trim() === ''}
+              onClick={() => void save({ disapprovalAlertThreshold: Math.max(0, Math.round(Number(thresholdDraft) || 0)) })}
+            >
+              Save
+            </button>
+          </div>
+          <span style={hint}>
+            Counted against the day before, so a shop that has always had a few turned down is not nagged about them. Set it to 0 and
+            nothing is raised at all - including anything already showing in the bell.
+          </span>
+        </label>
+
+        <div style={{ marginTop: '1rem' }}>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.875rem' }}>
+            <input
+              type="checkbox"
+              checked={settings.alertEmailEnabled}
+              disabled={saving}
+              onChange={(e) => void save({ alertEmailEnabled: e.target.checked })}
+              style={{ marginTop: '0.2rem' }}
+            />
+            <span>
+              Email me as well as showing it in the bell
+              <span style={hint}>
+                Only when something first goes wrong, never a daily reminder that it still is. The wording lives in Settings, Emails,
+                under Google Shopping, and there is no link in it - your admin address stays yours.
+              </span>
+            </span>
+          </label>
+          <label style={{ display: 'block', marginTop: '0.75rem' }}>
+            <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Send those to</span>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <input
+                type="email"
+                autoComplete="off"
+                value={alertEmailDraft}
+                placeholder="you@example.com"
+                onChange={(e) => setAlertEmailDraft(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 320 }}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={saving || alertEmailDraft === settings.alertEmail}
+                onClick={() => void save({ alertEmail: alertEmailDraft })}
+              >
+                Save address
+              </button>
+            </div>
+            {settings.alertEmailEnabled && settings.alertEmail === '' && (
+              <span style={{ ...hint, color: 'var(--color-warning)' }}>
+                Emails are switched on but there is nowhere to send them, so nothing will be sent. The bell still gets everything.
+              </span>
+            )}
+          </label>
+        </div>
+
+        <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
+          <h4 style={{ ...legend, fontSize: '0.875rem' }}>Which feed at Google is yours</h4>
+          <span style={hint}>
+            Cactus works this out by matching the address Google fetches against the feed address above, and only needs telling if you
+            have more than one feed pointing at the same place. Merchant Center shows the number in the address bar when a feed is open.
+          </span>
+          <p style={{ ...hint, marginTop: '0.5rem' }}>
+            {settings.feedDataSourceDetectedId
+              ? `Found on its own: feed ${settings.feedDataSourceDetectedId}.`
+              : 'Not found yet. It is looked for the first time the Health tab checks the feed.'}
+          </p>
+          <label style={{ display: 'block', marginTop: '0.75rem' }}>
+            <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Use this feed instead</span>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={dataSourceDraft}
+                placeholder="Leave blank to work it out"
+                onChange={(e) => setDataSourceDraft(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 260 }}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={saving || dataSourceDraft === settings.feedDataSourceId}
+                onClick={() => void save({ feedDataSourceId: dataSourceDraft })}
+              >
+                Save feed
+              </button>
+            </div>
+          </label>
         </div>
       </section>
 
@@ -400,13 +531,41 @@ export function GoogleShoppingSettingsTab() {
           rate for each group over in Merchant Center. Useful where what you charge depends on what the thing is - a chair, a desk,
           something made to order - rather than on the product itself.
         </span>
-        {settings.shippingLabelAttributes.length === 0 && (
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Where the group comes from</span>
+          <select
+            value={settings.shippingLabelSource}
+            disabled={saving}
+            onChange={(e) => void save({ shippingLabelSource: e.target.value as GsfLabelSource })}
+            style={{ ...inputStyle, maxWidth: 340 }}
+          >
+            <option value="attribute">A product attribute you choose</option>
+            <option value="delivery-services" disabled={!settings.deliveryScopesAvailable}>
+              Your own delivery rules
+            </option>
+          </select>
+          <span style={hint}>
+            {settings.shippingLabelSource === 'delivery-services'
+              ? 'Each product is labelled with the group its delivery price is written against - its range, category or supplier. '
+                + 'The Delivery tab under Products sends Merchant Center a rate for each of those same groups, so every label has a '
+                + 'price waiting for it.'
+              : 'Each product goes to Google labelled with its own value for whatever attribute you pick below, and a variation uses '
+                + 'its own where it has one. You then set a rate for each of those values in Merchant Center by hand.'}
+          </span>
+          {!settings.deliveryScopesAvailable && (
+            <span style={hint}>
+              Nothing on this site publishes delivery rules at the moment, so the second option has nothing to read. Install a
+              delivery module and it fills itself in.
+            </span>
+          )}
+        </label>
+        {settings.shippingLabelSource === 'attribute' && settings.shippingLabelAttributes.length === 0 && (
           <p style={{ ...hint, marginTop: '0.5rem' }}>
             Nothing on this site keeps product attributes at the moment, so there is nothing to group by. Install a product attributes
             module and this fills itself in.
           </p>
         )}
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label style={{ display: settings.shippingLabelSource === 'attribute' ? 'block' : 'none', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Group by</span>
           <select
             value={settings.shippingLabelAttributeId}
@@ -534,6 +693,41 @@ export function GoogleShoppingSettingsTab() {
           asks to be let into promotions before it will read it, which is a form on their side rather than a switch on ours, and they
           review each offer before it shows.
         </span>
+        {settings.promotionWindows.length > 0 && (
+          <div style={{ marginTop: '1rem' }}>
+            <span style={{ display: 'block', color: 'var(--color-text)', marginBottom: '0.25rem' }}>Offers running now</span>
+            <span style={hint}>
+              Google will not reuse a name once an offer under it has finished, so each one is renewed under a new name before its run is
+              up. If Google has already stopped one - it will say the offer has expired, or that it cannot be updated - start it again
+              here and it goes out under a fresh name on the next read.
+            </span>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0.6rem 0 0' }}>
+              {settings.promotionWindows.map((promotion) => (
+                <li
+                  key={promotion.baseKey}
+                  style={{
+                    display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap',
+                    padding: '0.5rem 0', borderTop: '1px solid var(--color-border)',
+                  }}
+                >
+                  <code style={{ color: 'var(--color-text)', wordBreak: 'break-all' }}>{promotion.promotionId}</code>
+                  <span style={{ ...hint, marginLeft: 'auto' }}>
+                    runs until {new Date(promotion.endsAt).toLocaleDateString()}
+                    {promotion.revision > 0 ? ` - started again ${promotion.revision} time${promotion.revision === 1 ? '' : 's'}` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={saving}
+                    onClick={() => void save({ reissuePromotion: promotion.baseKey })}
+                  >
+                    Start again
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section style={card}>

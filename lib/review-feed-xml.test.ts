@@ -92,6 +92,42 @@ describe('buildReviewFeedXml', () => {
     expect(xml).toContain('<name>Test Shop</name>')
   })
 
+  it('orders product_ids the way productIdsType sequences them', () => {
+    const xml = buildReviewFeedXml(publisher, [{
+      ...baseReview,
+      products: [{
+        url: 'https://example.test/shop/products/oslo-desk',
+        name: 'Oslo Desk',
+        gtins: ['5012345678900'],
+        mpns: ['OSL-1600'],
+        skus: ['prod_oslo_black'],
+        brands: ['Nordic'],
+      }],
+    }])
+    const order = ['<gtins>', '<mpns>', '<skus>', '<brands>']
+    const positions = order.map((tag) => xml.indexOf(tag))
+    expect(positions.every((p) => p >= 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+  })
+
+  it('carries every identifier of a listing sold in variations', () => {
+    const xml = buildReviewFeedXml(publisher, [{
+      ...baseReview,
+      products: [{
+        url: 'https://example.test/shop/products/oslo-desk',
+        name: 'Oslo Desk',
+        gtins: ['5012345678900', '5012345678917'],
+        skus: ['prod_oslo_black', 'prod_oslo_oak'],
+        brands: ['Nordic'],
+      }],
+    }])
+    expect(xml).toContain('<gtin>5012345678900</gtin>')
+    expect(xml).toContain('<gtin>5012345678917</gtin>')
+    expect(xml).toContain('<sku>prod_oslo_black</sku>')
+    expect(xml).toContain('<sku>prod_oslo_oak</sku>')
+    expect(xml).not.toContain('<mpns>')
+  })
+
   it('says how each review was collected', () => {
     const xml = buildReviewFeedXml(publisher, [{ ...baseReview, collectionMethod: 'unsolicited' }])
     expect(xml).toContain('<collection_method>unsolicited</collection_method>')

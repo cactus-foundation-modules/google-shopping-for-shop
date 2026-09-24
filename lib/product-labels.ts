@@ -83,3 +83,32 @@ export async function getProductLabels(
   }
   return result
 }
+
+/** How many ids go to the provider in one call. It reads them with one bind
+ *  parameter each, and Postgres stops at 65,535 of those in a statement. */
+const VALUES_CHUNK = 10_000
+
+/** Every value of one attribute ticked against each of these products, keyed
+ *  by product id, in the attribute's own value order. Absent where nothing is
+ *  ticked. Feed rules read this: a rule asks "is any of its values X", so all
+ *  of them matter, not just the first. */
+export async function getProductAttributeValues(
+  attributeId: string,
+  productIds: string[]
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>()
+  const ids = [...new Set(productIds)].filter(Boolean)
+  if (!attributeId || ids.length === 0) return result
+  const source = provider()
+  if (!source) return result
+  for (let start = 0; start < ids.length; start += VALUES_CHUNK) {
+    const answered = await source.valuesFor(attributeId, ids.slice(start, start + VALUES_CHUNK))
+    if (!(answered instanceof Map)) continue
+    for (const [productId, value] of answered) {
+      if (typeof productId !== 'string' || !Array.isArray(value)) continue
+      const labels = value.filter((v): v is string => typeof v === 'string' && v.trim() !== '').map((v) => v.trim())
+      if (labels.length > 0) result.set(productId, labels)
+    }
+  }
+  return result
+}

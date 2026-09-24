@@ -28,17 +28,34 @@ import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
 import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
 import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product-labels'
+import { getDeliveryCatalogue, getProductDeliveryScopes } from '@/modules/google-shopping-for-shop/lib/delivery/catalogue'
+import { assignDeliveryLabels } from '@/modules/google-shopping-for-shop/lib/delivery/labels'
 import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
 import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
-import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
 import { partitionPublishable } from '@/modules/google-shopping-for-shop/lib/withholding'
+import { adsRedirectLink, taggedLink } from '@/modules/google-shopping-for-shop/lib/feed-link-tags'
 import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
 import { getTitleTemplatesForItems } from '@/modules/google-shopping-for-shop/lib/title-templates'
-import { buildTitleTemplateContext, renderTitleTemplate, type TitleTemplateContext } from '@/modules/google-shopping-for-shop/lib/title-template-render'
+import type { TitleTemplateContext } from '@/modules/google-shopping-for-shop/lib/title-template-render'
+import { listFeedRules, getRangeAttributeId } from '@/modules/google-shopping-for-shop/lib/feed-rules/store'
+import { attributeIdsIn, categoryTrail, fillAttributeFacts, readProductCategories, textFact } from '@/modules/google-shopping-for-shop/lib/feed-rules/facts'
+import { optionFieldKey } from '@/modules/google-shopping-for-shop/lib/feed-rules/fields'
+import {
+  EMPTY_OUTCOME,
+  evaluateFeedRules,
+  type Exclusion,
+  type RuleFacts,
+  type RuleOutcome,
+  type RuleSubject,
+} from '@/modules/google-shopping-for-shop/lib/feed-rules/evaluate'
+import { customLabelsOf, identifiersAfterRules, titleAfterRules, type IdentityInputs, type TitleInputs } from '@/modules/google-shopping-for-shop/lib/feed-rules/apply'
+import { manualChoiceOf } from '@/modules/google-shopping-for-shop/lib/feed-rules/manual-choice'
+import type { FeedRule } from '@/modules/google-shopping-for-shop/lib/feed-rules/types'
 import { groupPromotions, promotionTerms, promotionTitle, type PromotionCandidate } from '@/modules/google-shopping-for-shop/lib/promotions'
 import type { FeedPromotion } from '@/modules/google-shopping-for-shop/lib/promotions-xml'
-import type { GsfProductData } from '@/modules/google-shopping-for-shop/lib/types'
+import { freshWindow, promotionIdForRevision } from '@/modules/google-shopping-for-shop/lib/promotion-windows'
+import { resolvePromotionWindows } from '@/modules/google-shopping-for-shop/lib/promotion-windows-data'
 
 // The parent-product columns the feed needs, fetched raw because listProducts
 // cannot select by an id list. Numeric columns arrive as Prisma.Decimal.
@@ -130,6 +147,27 @@ function descriptionOf(parent: { meta_description?: string | null; short_descrip
  *  dropped product is a support ticket six weeks later. */
 export type FeedWithheldItem = { id: string; title: string; reason: 'no-image' }
 
+/** An item built in full and then kept out on purpose: by the owner's own
+ *  choice on the product or variation, or by a feed rule. Kept whole, because
+ *  the workbench lists these too - "why is this not on Google" wants an
+ *  answer on the same screen as everything that is. */
+export type FeedExcludedItem = { item: FeedItem; exclusion: Exclusion }
+
+/** The feed rules as this build applied them. The subjects are held for the
+ *  workbench's preview, which runs a draft rule over them without rebuilding
+ *  the catalogue. */
+export type FeedRulesRun = {
+  rules: FeedRule[]
+  rangeAttributeId: string | null
+  subjects: RuleSubject[]
+  outcomes: Map<string, RuleOutcome>
+  /** Attribute ids whose values are already on the subjects. */
+  attributesRead: Set<string>
+  /** Every variation option name in the catalogue, as the shop spells it -
+   *  the Option fields a rule can ask about. */
+  optionNames: string[]
+}
+
 /** What an item's feed title was made from: the title it would carry with no
  *  template, and the tokens a template can use. Handed back so the admin
  *  workbench previews a template against exactly what the feed fills it from,
@@ -140,9 +178,22 @@ export type FeedData = {
   items: FeedItem[]
   promotions: FeedPromotion[]
   withheld: FeedWithheldItem[]
-  /** Keyed by item id; one entry per item built, withheld ones included. */
+  excluded: FeedExcludedItem[]
+  /** Keyed by item id; one entry per item built, withheld and excluded ones included. */
   titleSources: Map<string, FeedTitleSource>
+  rules: FeedRulesRun
 }
+
+/** One built row waiting for the feed rules: the row itself, what the rules
+ *  are asked about it, and the inputs its identifiers and title are finished
+ *  from once the rules have answered. */
+type PendingItem = {
+  item: FeedItem
+  subject: RuleSubject
+  identity: IdentityInputs
+  titleInputs: TitleInputs
+}
+
 
 export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   const [config, settings] = await Promise.all([getShopConfigCached(), getGsfSettings()])
@@ -234,14 +285,23 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- Shared lookups ------------------------------------------------------
   const parentIds = parents.map((p) => p.id)
   const standaloneIds = standalone.map((p) => p.id)
-  const [productData, mediaByProduct, categories, categoryTaxonomy, titleTemplates] = await Promise.all([
-    getProductDataForProducts([...parentIds, ...standaloneIds]),
+  const [productData, mediaByProduct, categories, categoryTaxonomy, titleTemplates, rules, rangeAttributeId, filedCategories] = await Promise.all([
+    // Variations too: each can carry the owner's own feed choice.
+    getProductDataForProducts([...parentIds, ...standaloneIds, ...childIds]),
     getProductMediaForProducts([...parentIds, ...standaloneIds]),
     listCategories(),
     getCategoryTaxonomy(),
     getTitleTemplatesForItems([...childIds, ...standaloneIds]),
+    listFeedRules(),
+    getRangeAttributeId(),
+    readProductCategories([...parentIds, ...standaloneIds]),
   ])
   const categoryPaths = buildCategoryPaths(categories)
+  const categoryParent = new Map(categories.map((c) => [c.id, c.parentId]))
+  // Every category a product is filed in, and every one above those - what a
+  // rule's "category is in or under" reads.
+  const categoryFact = (productId: string, masterCategoryId: string | null): readonly string[] =>
+    categoryTrail([...(masterCategoryId ? [masterCategoryId] : []), ...(filedCategories.get(productId) ?? [])], categoryParent)
   // Google's own taxonomy, resolved through the category tree so a leaf with
   // nothing typed against it still answers with its parent's.
   const googleCategoryFor = googleCategoryResolver(categories, categoryTaxonomy)
@@ -293,7 +353,8 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // would be asking the same question twenty thousand times.
   const returnLabels = settings.returnPolicyLabelsEnabled
 
-  const items: FeedItem[] = []
+  const pending: PendingItem[] = []
+  const optionNames = new Map<string, string>()
   const titleSources = new Map<string, FeedTitleSource>()
   // The tax class each finished item was priced under, so the delivery pass at
   // the bottom can gross up a service charge exactly as the item's own price was
@@ -342,7 +403,6 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- One item per enabled variant ---------------------------------------
   for (const parent of parents) {
     const data = productData.get(parent.id)
-    if (data?.excluded) continue
     const payload = payloads.get(parent.id)
     if (!payload) continue
     const parentImages = imagesOf(parent.id)
@@ -354,6 +414,13 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     const googleCategory = googleCategoryOf(parent.id, parent.master_category_id, data?.googleProductCategory)
     const description = descriptionOf(parent, parent.name)
     const condition = data?.condition ?? settings.defaultCondition
+    // What the rules read about the listing, shared by every variation of it.
+    // Attribute values are added once the whole catalogue is built.
+    const listingFacts: RuleFacts = {
+      supplier: textFact(parent.supplier),
+      category: categoryFact(parent.id, parent.master_category_id),
+      status: ['ACTIVE'],
+    }
 
     for (const variant of payload.variants) {
       if (!variant.enabled) continue
@@ -389,32 +456,25 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       const onSale = isOnSale(priced, config.enabledPriceTypes)
       const taxClassId = child.tax_class_id ?? parent.tax_class_id
       taxClassByItem.set(variant.childProductId, taxClassId)
-      const identifiers = identifiersOf(
-        data ?? { brand: null, gtin: null, mpn: null },
-        brandFallbacks(child.supplier, parent.supplier),
+      const identity: IdentityInputs = {
+        data: data ?? { brand: null, gtin: null, mpn: null },
+        fallbacks: brandFallbacks(child.supplier, parent.supplier),
         // The variation's own codes. Its own SKU and not its listing's: a
         // part number names one part, and the child row is the part.
-        { barcode: variant.barcode, sku: variant.sku },
-        { standalone: false, mpnFromSku: settings.mpnFromSku },
-      )
+        codes: { barcode: variant.barcode, sku: variant.sku },
+        standalone: false,
+        mpnFromSku: settings.mpnFromSku,
+      }
+      // Before the rules: what a rule asking about the brand or the barcode
+      // is asking about.
+      const identifiers = identifiersAfterRules(identity, EMPTY_OUTCOME)
       const originalTitle = variant.label ? `${parent.name} - ${variant.label}` : parent.name
-      const titleContext = buildTitleTemplateContext({
-        originalTitle,
-        parentTitle: parent.name,
-        variantLabel: variant.label,
-        sku: child.sku,
-        mpn: identifiers.mpn,
-        gtin: identifiers.gtin,
-        brand: identifiers.brand,
-        options: pairs,
-      })
-      titleSources.set(variant.childProductId, { originalTitle, parentTitle: parent.name, context: titleContext })
-      const title = renderTitleTemplate(titleTemplates.get(variant.childProductId), titleContext, originalTitle).title
 
-      items.push({
+      const item: FeedItem = {
         id: variant.childProductId,
         itemGroupId: parent.id,
-        title,
+        // Finished once the rules have run.
+        title: originalTitle,
         description,
         link,
         imageLinks: variationImageLinks({
@@ -432,7 +492,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         price: gross(variant.price, taxClassId),
         ...(onSale && variant.salePrice != null ? { salePrice: gross(variant.salePrice, taxClassId) } : {}),
         currency,
-        ...identifiers,
+        identifierExists: identifiers.identifierExists,
         condition,
         productType,
         ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
@@ -447,6 +507,37 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
             ) }
           : {}),
         axes: mapVariantAxes(pairs),
+      }
+
+      const own: RuleFacts = {
+        supplier: textFact(child.supplier),
+        brand: textFact(identifiers.brand),
+        stock_quantity: variant.trackInventory ? variant.stockCount ?? 0 : null,
+        stock_status: [item.availability],
+        price: item.price,
+        sale_price: item.salePrice ?? null,
+        status: textFact(child.status),
+        has_image: item.imageLinks.some((url) => url.trim() !== ''),
+        has_gtin: Boolean(identifiers.gtin),
+      }
+      for (const pair of pairs) {
+        const key = optionFieldKey(pair.name)
+        own[key] = textFact(pair.value)
+        if (!optionNames.has(key)) optionNames.set(key, pair.name.trim())
+      }
+
+      pending.push({
+        item,
+        subject: {
+          itemId: item.id,
+          title: originalTitle,
+          parentId: parent.id,
+          own,
+          parent: listingFacts,
+          manual: manualChoiceOf(productData.get(variant.childProductId), data),
+        },
+        identity,
+        titleInputs: { originalTitle, parentTitle: parent.name, variantLabel: variant.label, sku: child.sku, options: pairs },
       })
 
       considerForPromotion(
@@ -463,31 +554,21 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- One item per standalone product ------------------------------------
   for (const product of standalone) {
     const data = productData.get(product.id)
-    if (data?.excluded) continue
     const onSale = isOnSale(product, config.enabledPriceTypes)
     const googleCategory = googleCategoryOf(product.id, product.masterCategoryId, data?.googleProductCategory)
     taxClassByItem.set(product.id, product.taxClassId)
-    const identifiers = identifiersOf(
-      data ?? { brand: null, gtin: null, mpn: null },
-      brandFallbacks(product.supplier),
-      { barcode: product.barcode, sku: product.sku },
-      { standalone: true, mpnFromSku: settings.mpnFromSku },
-    )
-    const titleContext = buildTitleTemplateContext({
-      originalTitle: product.name,
-      parentTitle: product.name,
-      sku: product.sku,
-      mpn: identifiers.mpn,
-      gtin: identifiers.gtin,
-      brand: identifiers.brand,
-      options: [],
-    })
-    titleSources.set(product.id, { originalTitle: product.name, parentTitle: product.name, context: titleContext })
-    const title = renderTitleTemplate(titleTemplates.get(product.id), titleContext, product.name).title
+    const identity: IdentityInputs = {
+      data: data ?? { brand: null, gtin: null, mpn: null },
+      fallbacks: brandFallbacks(product.supplier),
+      codes: { barcode: product.barcode, sku: product.sku },
+      standalone: true,
+      mpnFromSku: settings.mpnFromSku,
+    }
+    const identifiers = identifiersAfterRules(identity, EMPTY_OUTCOME)
 
-    items.push({
+    const item: FeedItem = {
       id: product.id,
-      title,
+      title: product.name,
       description: descriptionOf(
         { meta_description: product.metaDescription, short_description: product.shortDescription, description: product.description },
         product.name,
@@ -498,7 +579,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       price: gross(Number(product.price), product.taxClassId),
       ...(onSale && product.salePrice != null ? { salePrice: gross(Number(product.salePrice), product.taxClassId) } : {}),
       currency,
-      ...identifiers,
+      identifierExists: identifiers.identifierExists,
       condition: data?.condition ?? settings.defaultCondition,
       productType: productTypeOf(product.id, product.masterCategoryId),
       ...(googleCategory ? { googleProductCategory: googleCategory } : {}),
@@ -510,6 +591,31 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
             undefined,
           ) }
         : {}),
+    }
+
+    pending.push({
+      item,
+      subject: {
+        itemId: product.id,
+        title: product.name,
+        parentId: null,
+        own: {
+          supplier: textFact(product.supplier),
+          brand: textFact(identifiers.brand),
+          category: categoryFact(product.id, product.masterCategoryId),
+          stock_quantity: product.trackInventory ? product.stockCount ?? 0 : null,
+          stock_status: [item.availability],
+          price: item.price,
+          sale_price: item.salePrice ?? null,
+          status: textFact(product.status),
+          has_image: item.imageLinks.some((url) => url.trim() !== ''),
+          has_gtin: Boolean(identifiers.gtin),
+        },
+        parent: null,
+        manual: manualChoiceOf(data, undefined),
+      },
+      identity,
+      titleInputs: { originalTitle: product.name, parentTitle: product.name, sku: product.sku, options: [] },
     })
 
     considerForPromotion(
@@ -519,6 +625,33 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       effectivePrice(product, config.enabledPriceTypes),
       product.taxClassId,
     )
+  }
+
+  // ----- Feed rules -----------------------------------------------------------
+  // Every row is built before any rule is asked about it, so a rule sees the
+  // same price, stock and brand the feed would send without it. Then each row
+  // is finished from its outcome - identifiers, title, custom labels - and the
+  // ones kept out, by the owner's own hand or by a rule, step aside here,
+  // before the delivery passes below spend anything on them. The precedence is
+  // the evaluator's (lib/feed-rules/evaluate.ts).
+  const subjects = pending.map((entry) => entry.subject)
+  const attributesRead = new Set(attributeIdsIn(rules.filter((rule) => rule.enabled)))
+  if (rangeAttributeId) attributesRead.add(rangeAttributeId)
+  await fillAttributeFacts(subjects, [...attributesRead], rangeAttributeId)
+  const outcomes = evaluateFeedRules(rules, subjects)
+
+  const items: FeedItem[] = []
+  const excluded: FeedExcludedItem[] = []
+  for (const { item, subject, identity, titleInputs } of pending) {
+    const outcome = outcomes.get(subject.itemId) ?? EMPTY_OUTCOME
+    const identifiers = identifiersAfterRules(identity, outcome)
+    const { title, context } = titleAfterRules(titleInputs, identifiers, titleTemplates.get(item.id), outcome)
+    const finished: FeedItem = { ...item, title, ...identifiers }
+    const labels = customLabelsOf(outcome)
+    if (labels) finished.customLabels = labels
+    titleSources.set(item.id, { originalTitle: titleInputs.originalTitle, parentTitle: titleInputs.parentTitle, context })
+    if (outcome.exclusion) excluded.push({ item: finished, exclusion: outcome.exclusion })
+    else items.push(finished)
   }
 
   // ----- Delivery groups -----------------------------------------------------
@@ -533,7 +666,41 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // and how an owner who set the attribute once on the parent expects it to
   // behave. Off unless the owner chose an attribute, and silent when nothing
   // publishes attributes at all.
-  if (settings.shippingLabelAttributeId) {
+  if (settings.shippingLabelSource === 'delivery-services') {
+    // The other source: the group each product's own DELIVERY PRICE is written
+    // against - its range, category or supplier - taken from whichever module
+    // publishes delivery services, resolved exactly as that module resolves it
+    // for the basket.
+    //
+    // Which is the whole point of doing it this way. The rate groups this
+    // module sends to Merchant Center are built from those same groups and
+    // named by the same function, so every label in the feed is one Merchant
+    // Center has a price for. Labelling by an attribute cannot promise that:
+    // the owner has to keep two lists in step by hand, and a product whose
+    // label matches no rate group silently takes whatever the last one says.
+    //
+    // No inheritance pass here, unlike the attribute below: the delivery
+    // module already falls a variation back to its parent for every scope fact
+    // it lacks, so an answer for a variation is the answer.
+    const [scopes, catalogue] = await Promise.all([
+      getProductDeliveryScopes(items.map((item) => item.id)),
+      getDeliveryCatalogue(),
+    ])
+    const labels = assignDeliveryLabels(catalogue?.scopes ?? [])
+    for (const item of items) {
+      const scopeId = scopes.get(item.id)?.scopeId
+      const label = scopeId ? labels.byScopeId.get(scopeId) : undefined
+      // A product in no delivery group at all gets no label. What that means at
+      // Google depends on the account: where a service has a rate group with no
+      // labels on it, such a product lands there; where none of them has one -
+      // which is the case on a shop whose delivery rules are all written
+      // against ranges - it gets NO delivery price at all, and Google stops
+      // showing it. Either way, inventing a label would be worse: it would put
+      // the product on a price that was never meant for it. The Delivery tab
+      // counts these and says which of the two is happening.
+      if (label) item.shippingLabel = label
+    }
+  } else if (settings.shippingLabelAttributeId) {
     const wanted = new Set<string>()
     for (const item of items) {
       wanted.add(item.id)
@@ -599,10 +766,39 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   items.length = 0
   items.push(...publishable)
 
-  // A withheld row must not leave a promotion behind advertising it. Cheap to
-  // keep in step here, and a promotions source naming items that are not in the
-  // product feed is its own class of Merchant Center complaint.
-  if (withheld.length > 0) {
+  // ----- Campaign tags -------------------------------------------------------
+  // Last of all, on the finished list, so the address every rule above reasoned
+  // about is the plain one and only what actually reaches Google carries the
+  // tag.
+  //
+  // Two addresses, differing in one parameter: `link` for a free listing and
+  // `ads_redirect` for a paid click. Google's free Shopping results carry no
+  // identifier of their own, so without this tag a free click is
+  // indistinguishable from somebody typing the address in - which is the whole
+  // reason the live figures on the Reports tab can exist at all.
+  //
+  // The ads address is composed from the UNTAGGED link, before the free tag
+  // goes on, or it would end up carrying both mediums.
+  //
+  // Worth separating two things that sit next to each other here. The warning
+  // in lib/feed-link-tags.ts about never parsing and re-serialising a URL is
+  // about the ENCODING of the option parameters already on it: those are
+  // spelled by shop-variations and have to come out of here character for
+  // character, or the feed address stops matching the sitemap and the canonical
+  // tag. Adding the campaign parameters does not affect that match at all -
+  // Google follows the tagged address, the page renders and declares the same
+  // canonical it always did, and the tag is simply not part of that comparison.
+  if (settings.linkTaggingEnabled) {
+    for (const item of items) {
+      item.adsRedirect = adsRedirectLink(item.link)
+      item.link = taggedLink(item.link)
+    }
+  }
+
+  // A withheld or excluded row must not leave a promotion behind advertising
+  // it. Cheap to keep in step here, and a promotions source naming items that
+  // are not in the product feed is its own class of Merchant Center complaint.
+  if (withheld.length > 0 || excluded.length > 0) {
     const live = new Set(items.map((i) => i.id))
     for (let i = osdCandidates.length - 1; i >= 0; i--) {
       const candidate = osdCandidates[i]
@@ -644,29 +840,56 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     }
 
     const { promotions: built, promotionIdByItem } = groupPromotions(candidates)
-    for (const item of items) {
-      const id = promotionIdByItem.get(item.id)
-      if (id) item.promotionIds = [id]
+
+    // The id and the dates come off the stored window, never off the clock.
+    // Google refuses to change a promotion's start time once it exists, so
+    // stamping `now` every fetch was an edit it rejected every time; and it caps
+    // a promotion at 183 days, so a standing offer has to become a NEW
+    // promotion before the cap rather than one with an end date that keeps
+    // moving. Both are lib/promotion-windows.ts's job, and the row it keeps is
+    // also what lets the two documents - fetched hours apart - agree on the id.
+    const now = new Date()
+    const stored = await resolvePromotionWindows(built.map((p) => p.id), now)
+    const windows = new Map(built.map((p) => [p.id, stored.get(p.id) ?? freshWindow(p.id, 0, now)]))
+    const idFor = (baseKey: string): string => {
+      const window = windows.get(baseKey)
+      return window ? promotionIdForRevision(window.baseKey, window.revision) : baseKey
     }
 
-    // Google caps a promotion at 183 days, so a standing offer is served as a
-    // rolling window that every fetch renews rather than an end date invented
-    // once and forgotten.
-    const startsAt = new Date()
-    const endsAt = new Date(startsAt.getTime() + 180 * 24 * 60 * 60 * 1000)
+    for (const item of items) {
+      const baseKey = promotionIdByItem.get(item.id)
+      if (baseKey) item.promotionIds = [idFor(baseKey)]
+    }
+
     for (const promotion of built) {
+      const window = windows.get(promotion.id)
+      if (!window) continue
       promotions.push({
-        id: promotion.id,
+        id: idFor(promotion.id),
         longTitle: promotionTitle(promotion, config.currencySymbol),
         moneyOff: promotion.moneyOff,
         minimumPurchase: promotion.minimumPurchase,
         currency,
         finePrint: promotionTerms(promotion, config.currencySymbol, settings.promotionsFinePrint),
-        startsAt,
-        endsAt,
+        startsAt: window.startsAt,
+        endsAt: window.endsAt,
       })
     }
   }
 
-  return { items, promotions, withheld, titleSources }
+  return {
+    items,
+    promotions,
+    withheld,
+    excluded,
+    titleSources,
+    rules: {
+      rules,
+      rangeAttributeId,
+      subjects,
+      outcomes,
+      attributesRead,
+      optionNames: [...optionNames.values()].sort((a, b) => a.localeCompare(b)),
+    },
+  }
 }

@@ -1,11 +1,18 @@
 // Assembles the product review feed: the shop's published reviews, plus the
-// handful of product facts Google matches them to a listing by.
+// product identifiers Google matches them to a listing by.
 //
 // Same division of labour as lib/feed-data.ts - every judgement call lives
 // here, and lib/review-feed-xml.ts only renders what this hands it. The reviews
 // themselves come across the optional provider seam (lib/reviews-source.ts), so
 // a shop with no reviews module installed serves a valid, empty document rather
 // than a 500.
+//
+// It builds the PRODUCT feed to do its job, which is the expensive-looking part
+// and the load-bearing one. Merchant Center does not match a review to a
+// product; it matches it to an offer, by GTIN or brand+MPN, against the very
+// rows the product feed published. So the only safe source for the identifiers
+// in this document is that document - see lib/review-listing-ids.ts for the
+// three ways working them out separately got them wrong.
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/prisma'
 import { resolveBranding } from '@/lib/config/branding'
@@ -14,7 +21,9 @@ import { productUrl } from '@/modules/shop/lib/product-url'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
 import { getAllPublishedReviews } from '@/modules/google-shopping-for-shop/lib/reviews-source'
-import { normaliseGtin } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { collectFeedItems } from '@/modules/google-shopping-for-shop/lib/feed-data'
+import { identifiersOf } from '@/modules/google-shopping-for-shop/lib/identifiers'
+import { listingIdentifiers, pruneIdentifiers } from '@/modules/google-shopping-for-shop/lib/review-listing-ids'
 import type { ReviewFeedItem, ReviewFeedPublisher } from '@/modules/google-shopping-for-shop/lib/review-feed-xml'
 
 // How much of a shop's review history one document carries. Google reads the
@@ -24,8 +33,9 @@ import type { ReviewFeedItem, ReviewFeedPublisher } from '@/modules/google-shopp
 const PAGE_SIZE = 500
 const MAX_REVIEWS = 5000
 
-// The product columns the review feed needs, read raw for the same reason
-// lib/feed-data.ts does: no bulk read in shop selects by an id list.
+// The product columns the review feed needs for a listing the product feed did
+// not publish, read raw for the same reason lib/feed-data.ts does: no bulk read
+// in shop selects by an id list.
 type ProductRow = {
   id: string
   barcode: string | null
@@ -74,21 +84,36 @@ export async function reviewFeedPublisher(siteUrl: string): Promise<ReviewFeedPu
  * Every published review the shop is willing to send, as feed items.
  *
  * Two things are deliberately dropped on the way:
- *   - reviews of a product the owner has kept OUT of the product feed. A shop
- *     that will not advertise a product on Google has not asked Google to
- *     publish opinions of it either.
- *   - the shop's buying codes as codes. Google would take a `skus` list; the
- *     product feed publishes no such thing and neither does this. Where the
- *     owner has said their product codes are the MAKER's part numbers, the
- *     code travels as the part number it is and nothing else changes - the same
- *     rule identifiersOf applies to the product feed, so one product is never
- *     given two identities by two documents.
+ *   - reviews of a product the owner has kept OUT of the product feed, by their
+ *     own choice or by a feed rule. A shop that will not advertise a product on
+ *     Google has not asked Google to publish opinions of it either.
+ *   - the shop's buying codes as codes. Where the owner has said their product
+ *     codes are the MAKER's part numbers, the code travels as the part number
+ *     it is and nothing else changes - and `skus` carries the feed's own opaque
+ *     offer ids, never the supplier code.
  */
 export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFeedItem[]> {
   const reviews = await getAllPublishedReviews({ pageSize: PAGE_SIZE, max: MAX_REVIEWS })
   if (reviews.length === 0) return []
 
-  const [config, settings] = await Promise.all([getShopConfigCached(), getGsfSettings()])
+  // The product feed, built the same way the product document builds it: rules
+  // run, exclusions applied, imageless rows already withheld. `items` is
+  // exactly what Merchant Center holds, which is exactly what a review has to
+  // be matched against.
+  const [config, settings, feed] = await Promise.all([
+    getShopConfigCached(),
+    getGsfSettings(),
+    collectFeedItems(siteUrl),
+  ])
+  const listings = listingIdentifiers(feed.items)
+  // Listings that WERE built and then kept out - by the owner's hand or by a
+  // rule. Separate from "not in the feed" because the two mean different
+  // things: this one is a decision, and a review of a product the shop has
+  // decided not to advertise is not published either. Something merely absent
+  // (sold out, hidden, no photograph) is not a decision about its reviews.
+  const keptOut = new Set<string>()
+  for (const { item } of feed.excluded) keptOut.add(item.itemGroupId ?? item.id)
+
   const productIds = reviews.map((review) => review.productId)
   const [productData, productRows] = await Promise.all([
     getProductDataForProducts(productIds),
@@ -98,16 +123,42 @@ export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFee
   const items: ReviewFeedItem[] = []
   for (const review of reviews) {
     const data = productData.get(review.productId)
-    if (data?.excluded) continue
+    const live = listings.get(review.productId)
+    // The owner's own "never send", and now a rule's too. A product with no
+    // offer left in the feed AND an offer that was deliberately kept out is a
+    // listing the shop has taken off Google; its reviews go with it.
+    if (data?.feedChoice === 'exclude') continue
+    if (!live && keptOut.has(review.productId)) continue
 
     const row = productRows.get(review.productId)
-    const supplier = settings.brandFromSupplier ? row?.supplier ?? null : null
-    const brand = data?.brand ?? supplier ?? settings.defaultBrand ?? null
-    // The parent's own barcode first, then whatever the owner typed on the
-    // product's Google tab. A malformed one is dropped rather than sent: Google
-    // rejects the review outright rather than ignoring the identifier.
-    const gtin = normaliseGtin(row?.barcode) ?? normaliseGtin(data?.gtin ?? null)
-    const mpn = data?.mpn?.trim() || (settings.mpnFromSku ? row?.sku?.trim() || null : null)
+    // Where the product feed has no row for this listing at all - sold out on a
+    // shop that hides sold-out stock, hidden, awaiting a photograph - there are
+    // no offer identifiers to copy, so the listing's own are resolved here
+    // through the same function the product feed uses. A review still worth
+    // sending: Google matches a valid GTIN against its own catalogue whether or
+    // not this shop is advertising the product this week.
+    const fallback = live ? undefined : identifiersOf(
+      { brand: data?.brand ?? null, gtin: data?.gtin ?? null, mpn: data?.mpn ?? null },
+      {
+        supplier: row?.supplier ?? null,
+        defaultBrand: settings.defaultBrand,
+        useSupplier: settings.brandFromSupplier,
+      },
+      { barcode: row?.barcode ?? null, sku: row?.sku ?? null },
+      // A listing with no variations in the feed is the standalone case, which
+      // is the only one entitled to the typed-in GTIN and MPN.
+      { standalone: true, mpnFromSku: settings.mpnFromSku },
+    )
+    // The product's own id as the sku: on a standalone listing that IS the id
+    // the feed publishes it under, so it still matches the offer Google held
+    // before the product went out of stock. On a variant listing it matches
+    // nothing, which costs nothing - an unmatched secondary id is not an error.
+    const ids = pruneIdentifiers(live ?? {
+      gtins: fallback?.gtin ? [fallback.gtin] : [],
+      mpns: fallback?.mpn ? [fallback.mpn] : [],
+      skus: [review.productId],
+      brands: fallback?.brand ? [fallback.brand] : [],
+    })
     const url = productUrl(siteUrl, review.productSlug, config.productUrlStyle)
 
     items.push({
@@ -126,17 +177,7 @@ export async function collectReviewFeedItems(siteUrl: string): Promise<ReviewFee
       // firm that min must be a real rating rather than "no rating given".
       ratingMin: 1,
       ratingMax: review.ratingMax,
-      products: [{
-        url,
-        name: review.productName,
-        gtins: gtin ? [gtin] : undefined,
-        // The owner's own answer first, then the product's code where they have
-        // said the codes are the maker's. Unlike the product feed there is no
-        // variation to confuse it with here - a review is written about the
-        // product as a whole, so the listing's own code is the right one.
-        mpns: mpn ? [mpn] : undefined,
-        brands: brand ? [brand] : undefined,
-      }],
+      products: [{ url, name: review.productName, ...ids }],
       // "post_fulfillment" is a claim about how the review was collected, so it
       // is only made where the shop actually asked for it after the order. A
       // review that simply turned up is unsolicited, which is what Google calls

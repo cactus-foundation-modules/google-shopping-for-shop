@@ -15,7 +15,7 @@ export type ListResponse = {
   key: string
   /** Null when the browser already holds the summary for `key`. */
   summary: WorkbenchSummary | null
-  catalogue: { readAt: string; ageSeconds: number; stale: boolean; items: number; withheld: number }
+  catalogue: { readAt: string; ageSeconds: number; stale: boolean; items: number; outOfFeed: number; withheld: number }
   canRefresh: boolean
   serverMs: number
 }
