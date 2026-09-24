@@ -1,27 +1,16 @@
 import { connection } from 'next/server'
 import { prisma } from '@/lib/db/prisma'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
-import { CustomerReviewsOptIn, MARKETING_CATEGORY } from './CustomerReviewsOptIn'
+import { bannerHasMarketingCategory, type StoredBanner } from '@/modules/google-shopping-for-shop/lib/consent-category'
+import { CustomerReviewsOptIn } from './CustomerReviewsOptIn'
 import { googleCustomerReviewsBlockComponent } from './CustomerReviewsBlock'
 
-type StoredBanner = { enabled?: boolean; categories?: Array<{ key?: string }> } | null
-
-/**
- * Whether the visitor has to say yes first.
- *
- * You can only wait for a switch that exists. A banner that is switched off, or
- * one carrying no marketing category, leaves the shopper nothing to grant - so
- * waiting would mean waiting for ever, and the survey would never be offered
- * while appearing to be switched on. Same rule, and the same reasoning, as the
- * Google Tag module's own consent gate.
- */
+/** Whether the visitor has to say yes first - see bannerHasMarketingCategory. */
 async function marketingCategoryExists(): Promise<boolean> {
   const config = await prisma.siteConfig
     .findUnique({ where: { id: 'singleton' }, select: { consentBannerConfig: true } })
     .catch(() => null)
-  const banner = config?.consentBannerConfig as StoredBanner
-  if (banner?.enabled !== true) return false
-  return (banner.categories ?? []).some((category) => category?.key === MARKETING_CATEGORY)
+  return bannerHasMarketingCategory(config?.consentBannerConfig as StoredBanner)
 }
 
 async function CustomerReviewsRsc() {

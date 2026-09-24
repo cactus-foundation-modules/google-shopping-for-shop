@@ -21,10 +21,8 @@
 
 import { useEffect } from 'react'
 import { CONSENT_CHANGE_EVENT, hasConsent } from '@/lib/consent/gate'
+import { MARKETING_CATEGORY } from '@/modules/google-shopping-for-shop/lib/consent-category'
 import type { GsfOptInStyle } from '@/modules/google-shopping-for-shop/lib/types'
-
-/** The cookie category this waits for, where the site's banner carries one. */
-export const MARKETING_CATEGORY = 'marketing'
 
 const SCRIPT_SRC = 'https://apis.google.com/js/platform.js?onload=renderOptIn'
 
