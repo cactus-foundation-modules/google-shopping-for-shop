@@ -264,6 +264,14 @@ export function DeliveryTab() {
         </div>
       )}
 
+      {/* --- Agreed by a route nothing in the settings spells out ---------- */}
+      {view && view.available && !view.unreadable && view.labelsVia === 'range-attribute' && (
+        <p className="gsw-message is-info">
+          Your feed labels each product by a product attribute, and that attribute is the same one your delivery rules write their
+          ranges against, so the labels below are exactly the ones your products already carry.
+        </p>
+      )}
+
       {/* --- Sending, once it has been read -------------------------------- */}
       {confirming && view && (
         <div className="gsd-confirm">

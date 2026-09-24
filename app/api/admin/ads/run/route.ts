@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireShopUser } from '@/modules/shop/lib/access'
+import { isAdmin } from '@/lib/permissions/check'
 import { changedBy } from '@/modules/google-shopping-for-shop/lib/workbench-actor'
 import { importAdsSpend } from '@/modules/google-shopping-for-shop/lib/google-ads/spend-import'
 import { runConversionUpload } from '@/modules/google-shopping-for-shop/lib/google-ads/upload'
@@ -28,11 +29,11 @@ export async function POST(request: NextRequest) {
   try {
     if (parsed.data.job === 'spend') {
       const outcome = await importAdsSpend()
-      const ads = await readAdsView()
+      const ads = await readAdsView({ isAdmin: isAdmin(gate.user) })
       return NextResponse.json({ outcome, ads }, { headers: { 'Cache-Control': 'no-store' } })
     }
     const outcome = await runConversionUpload({ actor: changedBy(gate.user) })
-    const ads = await readAdsView()
+    const ads = await readAdsView({ isAdmin: isAdmin(gate.user) })
     return NextResponse.json({ outcome, ads }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[google-shopping] Google Ads run failed:', error)

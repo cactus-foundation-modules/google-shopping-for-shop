@@ -14,15 +14,22 @@
 //
 // Nothing here calls Google on load. The four buttons are the only things that
 // pick up the telephone, and each says which call it is making.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { formatCount, formatDateTime, formatMoney, plural } from '@/modules/google-shopping-for-shop/components/workbench/format'
 import { ADS_ENV_COPY, type AdsEnvVar } from '@/modules/google-shopping-for-shop/lib/google-ads/types'
+import {
+  ADS_ENV_FIELDS,
+  adsEnvVarsToSave,
+  describeAdsEnvSave,
+  describeAdsEnvSaveFailure,
+} from '@/modules/google-shopping-for-shop/lib/google-ads/env-save'
 import {
   checkAdsConnection,
   connectAdsTracker,
   fetchAds,
   runAdsSpendFetch,
   runAdsUpload,
+  saveAdsEnvVars,
   setAds,
   type AdsAccessReport,
   type AdsView,
@@ -110,6 +117,164 @@ function TrackerLine({ view }: { view: AdsView }) {
       bids on it anyway - custom goals ignore the secondary setting, and there is no way for this site to see that you have done
       it. Leave it out of your conversion goals and the figures stay honest.
     </>
+  )
+}
+
+/**
+ * Entering the Google Ads sign-in details, and saying where each one comes
+ * from.
+ *
+ * Nothing here writes anything itself. Save posts to core's own environment
+ * route, which is the only thing on the site allowed to hold a credential: it
+ * checks the person is an administrator, refuses any name no installed module
+ * declares, writes the rest to the hosting project and raises the "needs
+ * redeploying" notice. This screen only says what came back.
+ *
+ * Two rules the boxes must never break:
+ *
+ *   never pre-filled  a value that is already saved is said to be saved, in
+ *                     words, beside its box. It is never put INTO the box - a
+ *                     secret in the page is a secret in every screenshot,
+ *                     every browser's saved-password list and every copy of
+ *                     the page source, and this site has no way of reading one
+ *                     back anyway.
+ *   blank means leave  an empty box changes nothing. That is how one detail is
+ *                     replaced without retyping the other four.
+ */
+export function AdsCredentials({ view }: { view: AdsView }) {
+  const idPrefix = useId()
+  const [values, setValues] = useState<Partial<Record<AdsEnvVar, string>>>({})
+  const [shown, setShown] = useState<Partial<Record<AdsEnvVar, boolean>>>({})
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<Notice | null>(null)
+  // Null means "nobody has touched it": open while the details are missing,
+  // tucked away once they are there.
+  const [opened, setOpened] = useState<boolean | null>(null)
+  const expanded = opened ?? !view.connected
+
+  const save = useCallback(async () => {
+    const vars = adsEnvVarsToSave(values)
+    if (vars.length === 0) {
+      setResult({ tone: 'info', text: 'Nothing was filled in, so nothing was saved.' })
+      return
+    }
+    setSaving(true)
+    setResult(null)
+    const outcome = await saveAdsEnvVars(vars)
+    setSaving(false)
+    if (!outcome.ok) {
+      setResult({ tone: 'error', text: describeAdsEnvSaveFailure(outcome.status, outcome.message) })
+      return
+    }
+    // Emptied on the way out, so a saved secret is not left sitting in the page
+    // behind a Show button.
+    setValues({})
+    setShown({})
+    setResult({
+      tone: outcome.skipped.length > 0 ? 'info' : 'ok',
+      text: describeAdsEnvSave(outcome.written, outcome.skipped),
+    })
+  }, [values])
+
+  return (
+    <div className="gsw-creds">
+      <button
+        type="button"
+        className="gsw-creds-summary"
+        aria-expanded={expanded}
+        onClick={() => setOpened(!expanded)}
+      >
+        {expanded ? 'Hide how to connect Google Ads' : 'How to connect Google Ads'}
+      </button>
+
+      {expanded && (
+        <>
+          <ol className="gsw-creds-steps">
+            <li>
+              In the Google Cloud console, under <strong>APIs and services</strong> then <strong>Credentials</strong>, make an
+              OAuth client. That gives you a <strong>sign-in ID</strong> and a <strong>sign-in secret</strong>, which are the
+              first two boxes below.
+            </li>
+            <li>
+              Let that client read your Google Ads account, once. What comes back is the <strong>permission token</strong>. It
+              is granted the one time and does not run out on its own.
+            </li>
+            <li>
+              The <strong>account number</strong> is the ten-digit one at the top right of Google Ads. Dashes are fine - they
+              are stripped out.
+            </li>
+            <li>
+              If your Google Ads account sits underneath a <strong>manager account</strong>, put the manager&apos;s number in as
+              well. If it stands on its own, leave that box empty.
+            </li>
+          </ol>
+
+          {view.isAdmin ? (
+            <form
+              className="gsw-creds-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void save()
+              }}
+            >
+              {ADS_ENV_FIELDS.map((key) => {
+                const id = `${idPrefix}-${key}`
+                const isShown = shown[key] === true
+                return (
+                  <div className="gsw-field" key={key}>
+                    <label className="gsw-field-label" htmlFor={id}>
+                      {ADS_ENV_COPY[key].label}
+                      {!ADS_ENV_COPY[key].required && <span className="gsw-field-optional">only if you need it</span>}
+                    </label>
+                    <p className="gsw-field-where">{ADS_ENV_COPY[key].where}</p>
+                    <div className="gsw-field-row">
+                      <input
+                        id={id}
+                        type={isShown ? 'text' : 'password'}
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={saving}
+                        value={values[key] ?? ''}
+                        placeholder={view.env[key] ? 'Leave empty to keep what is saved' : 'Not set yet'}
+                        onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => setShown((current) => ({ ...current, [key]: !isShown }))}
+                      >
+                        {isShown ? 'Hide' : 'Show'}
+                      </button>
+                      <span className={`gsw-field-state${view.env[key] ? ' is-set' : ''}`}>
+                        {view.env[key] ? 'Already set' : 'Not set yet'}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+
+              <p className="gsw-field-where">
+                Leave a box empty and that detail is left exactly as it is, so one of them can be replaced without retyping the
+                rest. Whatever you save only reaches the running site on its next rebuild.
+              </p>
+
+              <div className="gsw-creds-actions">
+                <button type="submit" className="btn btn-sm btn-primary" disabled={saving}>
+                  {saving ? 'Saving…' : 'Save these details'}
+                </button>
+              </div>
+
+              {result && <p className={`gsw-message is-${result.tone}`}>{result.text}</p>}
+            </form>
+          ) : (
+            <p className="gsw-field-where">
+              These have to be entered by an administrator, so there are no boxes here for you. Pass them to whoever looks after
+              this site and they can put them in on this same screen.
+            </p>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -259,7 +424,7 @@ export function AdsPanel() {
       {!view.connected && (
         <div className="gsw-message is-info">
           <p style={{ margin: '0 0 0.5rem' }}>
-            Google Ads is not connected yet. These still need saving on this site, under the deployment settings:
+            Google Ads is not connected yet. These still need saving on this site - the boxes for them are just below:
           </p>
           <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
             {view.missing.map((name: AdsEnvVar) => (
@@ -280,10 +445,13 @@ export function AdsPanel() {
         </div>
       )}
 
+      {/* --- Where the details come from, and the boxes to put them in ------ */}
+      <AdsCredentials view={view} />
+
       {notice && <p className={`gsw-message is-${notice.tone}`}>{notice.text}</p>}
 
       {/* --- The switches --------------------------------------------------- */}
-      <div className="gsw-check">
+      <div className="gsw-switch">
         <label>
           <input
             type="checkbox"
@@ -294,7 +462,7 @@ export function AdsPanel() {
           {' '}Use Google Ads on this site
         </label>
       </div>
-      <div className="gsw-check">
+      <div className="gsw-switch">
         <label>
           <input
             type="checkbox"
@@ -305,7 +473,7 @@ export function AdsPanel() {
           {' '}Bring in what the adverts cost, once a day
         </label>
       </div>
-      <div className="gsw-check">
+      <div className="gsw-switch">
         <label>
           <input
             type="checkbox"

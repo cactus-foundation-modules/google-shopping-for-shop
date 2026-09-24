@@ -9,11 +9,12 @@
 // kind it was holding.
 //
 // Read on every call rather than held in a module variable. That is not a way
-// of picking up a change without a deploy - it cannot be: saving on the
-// settings tab posts to core's own environment route, which writes the value to
-// the hosting project and triggers a redeploy, so the new value arrives with
-// the new build like every other environment variable. Reading per call simply
-// means no stale copy survives inside a warm serverless instance.
+// of picking up a change without a deploy - it cannot be: saving on the Health
+// tab's Google Ads panel posts to core's own environment route, which writes
+// the value to the hosting project and raises the "needs redeploying" notice,
+// so the new value arrives with the next build like every other environment
+// variable. Reading per call simply means no stale copy survives inside a warm
+// serverless instance.
 //
 // None of these values is ever returned to a route, put into an error, or
 // logged.

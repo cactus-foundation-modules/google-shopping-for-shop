@@ -5,6 +5,7 @@
 // class. Nothing here is a decision either: the tab draws what it is told and
 // the arithmetic has already happened.
 import type { DeliveryPlan } from '@/modules/google-shopping-for-shop/lib/delivery/plan'
+import type { DeliveryLabelRoute } from '@/modules/google-shopping-for-shop/lib/delivery/label-agreement'
 import type { DeliverySyncState } from '@/modules/google-shopping-for-shop/lib/delivery/state'
 import type { DeliveryDiff } from '@/modules/google-shopping-for-shop/lib/delivery/diff'
 import type { MappingNote } from '@/modules/google-shopping-for-shop/lib/delivery/mapping'
@@ -46,11 +47,17 @@ export type DeliveryTabView = {
   notes: MappingNote[]
   /** True while any note is blocking, which is what stops the send. */
   blocked: boolean
-  /** Whether the feed labels its items with these delivery groups. False is
-   *  the default on a fresh install, and it is what the first blocking note is
-   *  about - drawn apart from the rest because it is a setting the owner can
-   *  change, not an awkward delivery rule they have to rework. */
+  /** Whether the labels the feed sends are the labels these rate groups name.
+   *  False is the default on a fresh install, and it is what the first blocking
+   *  note is about - drawn apart from the rest because it is a setting the
+   *  owner can change, not an awkward delivery rule they have to rework. */
   labelsFromDeliveryScopes: boolean
+  /** How that was reached, null where it was not. 'range-attribute' means the
+   *  feed labels by a product attribute which IS the delivery rules' own range
+   *  attribute, so the labels agree without the setting saying so - and the tab
+   *  says as much, because an owner should not have to wonder why a warning
+   *  they were given yesterday has gone. */
+  labelsVia: DeliveryLabelRoute | null
   /** The last comparison, or null where none has been made. Stale by
    *  definition, hence comparedAt sitting on it. */
   lastDiff: DeliveryDiff | null
@@ -85,6 +92,7 @@ export function toTabView(plan: DeliveryPlan, state: DeliverySyncState, settings
     notes: plan.mapping?.notes ?? [],
     blocked: plan.mapping?.blocked ?? false,
     labelsFromDeliveryScopes: plan.labelsFromDeliveryScopes,
+    labelsVia: plan.labelsVia,
     lastDiff: state.lastDiff,
     pushedAt: state.pushedAt ? state.pushedAt.toISOString() : null,
     managedServices: state.managedServices,

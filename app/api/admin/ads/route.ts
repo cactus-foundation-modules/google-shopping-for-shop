@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireShopUser } from '@/modules/shop/lib/access'
+import { isAdmin } from '@/lib/permissions/check'
 import { clearAlert } from '@/lib/notifications/alerts'
 import { ALERT_KEYS } from '@/modules/google-shopping-for-shop/lib/health/alerts'
 import { updateGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
@@ -22,7 +23,7 @@ export async function GET() {
   if (gate.error) return gate.error
 
   try {
-    const ads = await readAdsView()
+    const ads = await readAdsView({ isAdmin: isAdmin(gate.user) })
     return NextResponse.json({ ads }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[google-shopping] Google Ads view failed:', error)
@@ -68,7 +69,7 @@ export async function PATCH(request: NextRequest) {
   if (body.enabled === false || body.uploadEnabled === false) await clearAlert(ALERT_KEYS.adsUpload)
 
   try {
-    const ads = await readAdsView()
+    const ads = await readAdsView({ isAdmin: isAdmin(gate.user) })
     return NextResponse.json({ ads }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[google-shopping] Google Ads view failed after a change:', error)

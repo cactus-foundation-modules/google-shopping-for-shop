@@ -82,7 +82,7 @@ type TokenCacheEntry = { token: string; expiresAt: number }
 
 // Keyed by a hash of the client and the refresh token.
 //
-// Not because the settings tab can swap them under a running process - it
+// Not because the Health tab can swap them under a running process - it
 // cannot: saving there writes the hosting project's environment and redeploys,
 // so a new value arrives with a new build and an empty cache. The key matters
 // because one process can legitimately hold more than one set at a time (a test

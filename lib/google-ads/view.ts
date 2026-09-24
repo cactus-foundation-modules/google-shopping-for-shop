@@ -48,6 +48,14 @@ export type AdsView = {
   /** The required ones that are still missing, in the order to show them. */
   missing: AdsEnvVar[]
   connected: boolean
+  /**
+   * Whether the person reading this panel may enter those environment
+   * settings. The panel itself sits behind `shop.products`, which is a weaker
+   * permission than core's environment route requires, so the form has to be
+   * withheld from everyone else - and carrying the fact here rather than in a
+   * second request keeps the Health tab's one-read-per-panel rule intact.
+   */
+  isAdmin: boolean
 
   conversionAction: {
     /** Google's resource name, or null when nothing has been set up. */
@@ -106,7 +114,7 @@ export type AdsView = {
   }
 }
 
-export async function readAdsView(): Promise<AdsView> {
+export async function readAdsView({ isAdmin }: { isAdmin: boolean }): Promise<AdsView> {
   const settings = await getGsfSettings()
   const [run, totals, waiting, recent, problems, extent] = await Promise.all([
     readAdsRun(),
@@ -128,6 +136,7 @@ export async function readAdsView(): Promise<AdsView> {
     env: adsEnvPresence(),
     missing: missingAdsEnvVars(),
     connected: missingAdsEnvVars().length === 0,
+    isAdmin,
     conversionAction: {
       resourceName: settings.adsConversionAction,
       name: settings.adsConversionActionName,

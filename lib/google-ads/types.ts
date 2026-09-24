@@ -37,8 +37,8 @@ export const OAUTH_TOKEN_URI = 'https://oauth2.googleapis.com/token'
 // ---------------------------------------------------------------------------
 
 /** The environment variables this module reads, in the order the screen lists
- *  them. Named here so the settings tab, the connection check and the jobs all
- *  agree on the spelling. */
+ *  them. Named here so the Health tab's panel, the connection check and the
+ *  jobs all agree on the spelling. */
 export const ADS_ENV_VARS = [
   'GOOGLE_ADS_CLIENT_ID',
   'GOOGLE_ADS_CLIENT_SECRET',
@@ -119,7 +119,7 @@ export const ADS_SKIP_COPY: Record<AdsSkipReason, string> = {
   off: 'Google Ads is switched off for this site.',
   'spend-off': 'Fetching what your ads cost is switched off, so nothing was brought in.',
   'upload-off': 'Sending your sales to Google Ads is switched off, so nothing was sent.',
-  'no-credentials': 'Google Ads is not connected yet. The settings tab lists exactly which details are missing.',
+  'no-credentials': 'Google Ads is not connected yet. The Google Ads panel on the Health tab lists exactly which details are missing, and is where they go in.',
   'no-account': 'No Google Ads account number has been saved, so there is nothing to ask about.',
   'no-conversion-action': 'The sales tracker at Google Ads has not been set up yet. Press "Set it up" and this can start.',
   'action-missing': 'Google Ads no longer has the sales tracker this site was using - it looks as though it has been deleted over '

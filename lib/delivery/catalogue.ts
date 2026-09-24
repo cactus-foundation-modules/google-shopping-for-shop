@@ -78,6 +78,15 @@ export type DeliveryCatalogue = {
   scopeOrder: DeliveryScopeKind[]
   pricing: 'per-unit' | 'per-order'
   scopes: DeliveryScope[]
+  /** The product attribute every RANGE scope's ref points into, where the
+   *  publishing module says. Null where it has not got one.
+   *
+   *  OPTIONAL, and deliberately so: an advanced-shipping older than this build
+   *  does not publish it at all, and that install must behave exactly as it did
+   *  before - which it does, because absence can never equal an attribute id.
+   *  Never a dependency, never a minVersion; see lib/delivery/label-agreement.ts
+   *  for the one question it answers. */
+  rangeAttributeId?: string | null
   services: DeliveryServiceEntry[]
   dispatch: DeliveryDispatchRules
   holidays: Array<{ date: string; name: string }>
@@ -239,6 +248,12 @@ export async function getDeliveryCatalogue(): Promise<DeliveryCatalogue | null> 
     // quoted to Google as the whole delivery charge when it is only the first
     // unit's share.
     pricing: row.pricing === 'per-unit' ? 'per-unit' : 'per-order',
+    // Absent, blank or anything but a string all read as null - "no attribute
+    // named" - which is the answer that keeps an older publisher behaving as it
+    // always did rather than being taken for an agreement it never claimed.
+    rangeAttributeId: typeof row.rangeAttributeId === 'string' && row.rangeAttributeId.trim() !== ''
+      ? row.rangeAttributeId.trim()
+      : null,
     scopes,
     services: services.sort((a, b) => a.position - b.position || a.label.localeCompare(b.label, 'en-GB')),
     dispatch,

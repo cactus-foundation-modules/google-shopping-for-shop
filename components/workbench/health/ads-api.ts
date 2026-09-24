@@ -96,3 +96,45 @@ export async function runAdsSpendFetch(): Promise<{ outcome: SpendImportOutcome;
     'Could not fetch what your ads cost',
   )
 }
+
+/**
+ * Saves the Google Ads sign-in details to the hosting project, via CORE's own
+ * environment route - not one of this module's. That route is admin-only, it
+ * only accepts keys an installed module declares in its manifest, and on
+ * success it raises the "needs redeploying" notice itself. No credential ever
+ * passes through a module route, and nothing here writes one anywhere.
+ *
+ * Unlike every other call in this file it does NOT throw on failure: the panel
+ * needs the status code to choose which of core's several refusals it is
+ * looking at, and a thrown Error would have thrown that away.
+ */
+export type AdsEnvSaveResult =
+  | { ok: true; written: number; skipped: string[] }
+  | { ok: false; status: number; message: string }
+
+export async function saveAdsEnvVars(vars: Array<{ key: string; value: string }>): Promise<AdsEnvSaveResult> {
+  let response: Response
+  try {
+    response = await fetch('/api/admin/env', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vars }),
+    })
+  } catch {
+    return { ok: false, status: 0, message: 'The site could not be reached. Check your connection and try again.' }
+  }
+
+  const body: unknown = await response.json().catch(() => null)
+  const message = typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+    ? body.error
+    : ''
+  if (!response.ok) return { ok: false, status: response.status, message }
+
+  const written = typeof body === 'object' && body !== null && 'written' in body && typeof body.written === 'number'
+    ? body.written
+    : 0
+  const skipped = typeof body === 'object' && body !== null && 'skipped' in body && Array.isArray(body.skipped)
+    ? body.skipped.filter((key): key is string => typeof key === 'string')
+    : []
+  return { ok: true, written, skipped }
+}

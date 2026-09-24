@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfLabelSource, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
 import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components/GoogleAccessCheck'
-import { AdsSettingsSection } from '@/modules/google-shopping-for-shop/components/AdsSettingsSection'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -352,10 +351,6 @@ export function GoogleShoppingSettingsTab() {
           </button>
           <GoogleAccessCheck />
         </div>
-
-        {/* Google Ads: a different account, a different sign-in, and the one
-            thing an owner most often assumes the key above already covers. */}
-        <AdsSettingsSection />
       </section>
 
       <section style={card}>

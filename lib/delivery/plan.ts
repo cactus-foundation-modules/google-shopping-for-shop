@@ -11,6 +11,10 @@ import {
   type DeliveryCatalogue,
 } from '@/modules/google-shopping-for-shop/lib/delivery/catalogue'
 import { assignDeliveryLabels, type DeliveryLabelMap } from '@/modules/google-shopping-for-shop/lib/delivery/labels'
+import {
+  resolveDeliveryLabelAgreement,
+  type DeliveryLabelRoute,
+} from '@/modules/google-shopping-for-shop/lib/delivery/label-agreement'
 import { mapDeliveryCatalogue, type DeliveryMapping } from '@/modules/google-shopping-for-shop/lib/delivery/mapping'
 import { resolveDeliveryPricing } from '@/modules/google-shopping-for-shop/lib/delivery/pricing'
 import { coverageNotes, measureDeliveryCoverage, type DeliveryCoverage } from '@/modules/google-shopping-for-shop/lib/delivery/coverage'
@@ -37,9 +41,14 @@ export type DeliveryPlan = {
    *  it was not asked for - it costs a pass over the catalogue, so the push
    *  and the daily check skip it and only the preview pays. */
   coverage: DeliveryCoverage | null
-  /** Whether the feed labels its items with these delivery groups. False means
-   *  nothing here can reach a product, which is why the mapping blocks on it. */
+  /** Whether the labels the feed sends are the labels these rate groups name.
+   *  False means nothing here can reach a product, which is why the mapping
+   *  blocks on it. */
   labelsFromDeliveryScopes: boolean
+  /** Which route got there, null where it did not. 'range-attribute' is the
+   *  one the screen has to explain: nothing in the settings says "delivery
+   *  rules", and the owner is owed a sentence saying why that is fine. */
+  labelsVia: DeliveryLabelRoute | null
 }
 
 export type PlanOptions = {
@@ -58,21 +67,32 @@ export async function buildDeliveryPlan(options: PlanOptions = {}): Promise<Deli
   }
 
   if (!hasDeliveryCatalogue()) {
-    return { available: false, unreadable: false, catalogue: null, labels: null, mapping: null, coverage: null, labelsFromDeliveryScopes: false, ...base }
+    return { available: false, unreadable: false, catalogue: null, labels: null, mapping: null, coverage: null, labelsFromDeliveryScopes: false, labelsVia: null, ...base }
   }
 
   const catalogue = await getDeliveryCatalogue()
   if (!catalogue) {
-    return { available: true, unreadable: true, catalogue: null, labels: null, mapping: null, coverage: null, labelsFromDeliveryScopes: false, ...base }
+    return { available: true, unreadable: true, catalogue: null, labels: null, mapping: null, coverage: null, labelsFromDeliveryScopes: false, labelsVia: null, ...base }
   }
 
   const labels = assignDeliveryLabels(catalogue.scopes)
-  // The two settings that decide whether ANY of this reaches a product: what
-  // the feed labels its items with, and whether it is also sending each item
-  // its own prices. Both live on the same settings row the rest of this reads,
-  // so neither costs a query - and leaving them out was how the preview came to
-  // report a healthy send that would have mispriced the whole catalogue.
-  const labelsFromDeliveryScopes = settings.shippingLabelSource === 'delivery-services'
+  // The two things that decide whether ANY of this reaches a product: whether
+  // the labels the feed sends are the labels these rate groups name, and
+  // whether it is also sending each item its own prices. Both come off the same
+  // settings row the rest of this reads, so neither costs a query - and leaving
+  // them out was how the preview came to report a healthy send that would have
+  // mispriced the whole catalogue.
+  //
+  // The first is a question, not a setting: labelling by the delivery rules is
+  // one way to agree, and labelling by the very attribute those rules write
+  // their ranges against is another. label-agreement.ts holds the reasoning.
+  const agreement = resolveDeliveryLabelAgreement({
+    labelSource: settings.shippingLabelSource,
+    labelAttributeId: settings.shippingLabelAttributeId,
+    catalogue,
+    labels,
+  })
+  const labelsFromDeliveryScopes = agreement.agreed
   const mapping = mapDeliveryCatalogue({
     catalogue,
     labels,
@@ -94,5 +114,5 @@ export async function buildDeliveryPlan(options: PlanOptions = {}): Promise<Deli
     for (const note of coverageNotes(coverage)) mapping.notes.push({ severity: note.severity, service: null, message: note.message })
   }
 
-  return { available: true, unreadable: false, catalogue, labels, mapping, coverage, labelsFromDeliveryScopes, ...base }
+  return { available: true, unreadable: false, catalogue, labels, mapping, coverage, labelsFromDeliveryScopes, labelsVia: agreement.via, ...base }
 }

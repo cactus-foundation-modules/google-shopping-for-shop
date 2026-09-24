@@ -9,7 +9,7 @@ vi.mock('@/lib/modules/extension-points.server', () => ({
   moduleServerExtensionPointComponents: registry.value,
 }))
 
-const { getProductDeliveryScopes, hasDeliveryCatalogue } =
+const { getDeliveryCatalogue, getProductDeliveryScopes, hasDeliveryCatalogue } =
   await import('@/modules/google-shopping-for-shop/lib/delivery/catalogue')
 
 function publish(scopesForProducts: (ids: string[]) => Promise<unknown>) {
@@ -17,6 +17,36 @@ function publish(scopesForProducts: (ids: string[]) => Promise<unknown>) {
     'advanced-shipping': { catalogue: async () => null, scopesForProducts },
   }
 }
+
+function publishCatalogue(answer: Record<string, unknown>) {
+  registry.value['shop.delivery-services-catalogue'] = {
+    'advanced-shipping': { catalogue: async () => answer, scopesForProducts: async () => new Map() },
+  }
+}
+
+const DISPATCH = { cutoffTime: '14:30', timezone: 'Europe/London', shipDays: [1, 2, 3, 4, 5], dispatchLeadDays: 1 }
+
+describe('getDeliveryCatalogue', () => {
+  it('carries the attribute the publishing module says its ranges point into', async () => {
+    publishCatalogue({ dispatch: DISPATCH, scopes: [], services: [], rangeAttributeId: ' attr-range ' })
+    expect((await getDeliveryCatalogue())?.rangeAttributeId).toBe('attr-range')
+  })
+
+  // An advanced-shipping older than this build does not publish one at all, and
+  // that install has to behave exactly as it did before - which it does,
+  // because "no attribute named" can never equal an attribute id.
+  it('reads no attribute at all where an older publisher sends none', async () => {
+    publishCatalogue({ dispatch: DISPATCH, scopes: [], services: [] })
+    expect((await getDeliveryCatalogue())?.rangeAttributeId).toBeNull()
+  })
+
+  it('reads no attribute where what came across is blank or not a string', async () => {
+    publishCatalogue({ dispatch: DISPATCH, scopes: [], services: [], rangeAttributeId: '   ' })
+    expect((await getDeliveryCatalogue())?.rangeAttributeId).toBeNull()
+    publishCatalogue({ dispatch: DISPATCH, scopes: [], services: [], rangeAttributeId: 42 })
+    expect((await getDeliveryCatalogue())?.rangeAttributeId).toBeNull()
+  })
+})
 
 describe('getProductDeliveryScopes', () => {
   it('answers nothing at all where no module publishes delivery', async () => {

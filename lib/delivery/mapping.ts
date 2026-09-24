@@ -90,14 +90,15 @@ export type MappingInput = {
   /** Turns a NET figure into what a shopper actually pays, exactly as the feed
    *  grosses a product price. Identity on a shop that stores gross. */
   grossUp: (net: number) => number
-  /** Whether the FEED labels its items with these same delivery groups.
+  /** Whether the labels the FEED puts on its items are the labels named below.
    *
    *  The single most important input here, and it defaults to false on a fresh
    *  install. Everything below builds rate groups that Merchant Center matches
    *  by shipping label - so if the feed is labelling items some other way, or
    *  not at all, every label named below matches nothing and every product in
    *  the shop drops through to the catch-all. See the blocking note in
-   *  mapDeliveryCatalogue. */
+   *  mapDeliveryCatalogue, and lib/delivery/label-agreement.ts for the two ways
+   *  this comes to be true. */
   labelsFromDeliveryScopes: boolean
   /** Whether the feed also sends each item its OWN shipping prices. Google lets
    *  the per-item figure win, so the two features quietly cancel out. */
@@ -471,6 +472,13 @@ export function mapDeliveryCatalogue(input: MappingInput): DeliveryMapping {
   // So it blocks rather than warns. The fix is one setting away, the tab says
   // which, and the alternative is a silent wrong price on every product - the
   // one outcome this whole file exists to prevent.
+  //
+  // "The same groups" is a question, not a setting, and the caller has already
+  // answered it: labelling by the delivery rules agrees by construction, and so
+  // does labelling by the very product attribute those rules write their ranges
+  // against, which is the same words read twice. lib/delivery/label-agreement.ts
+  // holds the reasoning and the conditions. Everything below only needs the
+  // answer.
   if (!input.labelsFromDeliveryScopes) {
     notes.push({
       severity: 'blocking',

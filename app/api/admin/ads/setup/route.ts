@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireShopUser } from '@/modules/shop/lib/access'
+import { isAdmin } from '@/lib/permissions/check'
 import { getGsfSettings, recordAdsConversionAction } from '@/modules/google-shopping-for-shop/lib/settings'
 import { googleAdsCredentialsFromEnv } from '@/modules/google-shopping-for-shop/lib/google-ads/credentials'
 import { checkGoogleAdsAccess } from '@/modules/google-shopping-for-shop/lib/google-ads/access-check'
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
   const credentials = googleAdsCredentialsFromEnv()
   if (!credentials) {
     return NextResponse.json(
-      { error: 'Google Ads is not connected yet. The settings tab lists exactly which details are still needed.' },
+      { error: 'Google Ads is not connected yet. The Google Ads panel on the Health tab lists exactly which details are still needed, and takes them.' },
       { status: 400 },
     )
   }
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
       }).catch((error) => console.error('[google-shopping] could not record the Google Ads setup:', error))
     }
 
-    const ads = await readAdsView()
+    const ads = await readAdsView({ isAdmin: isAdmin(gate.user) })
     return NextResponse.json({ outcome, ads }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[google-shopping] Google Ads setup failed:', error)

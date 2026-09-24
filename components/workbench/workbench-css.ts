@@ -90,6 +90,33 @@ export const workbenchCss = `
 .gsw-tbody.is-busy{opacity:0.5;pointer-events:none}
 .gsw-check{width:36px}
 .gsw-check input{width:16px;height:16px;cursor:pointer;accent-color:var(--color-primary)}
+/* A settings switch on a panel, NOT the 36px checkbox COLUMN above - reusing
+   .gsw-check here squeezed each label into 36px and wrapped it one word per
+   line. Its own name so the table's width can never reach it again. */
+.gsw-switch{margin:0.375rem 0}
+.gsw-switch label{display:flex;gap:0.5rem;align-items:center;font-size:0.875rem;color:var(--color-text);cursor:pointer}
+.gsw-switch input{width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--color-primary)}
+.gsw-switch input:disabled,.gsw-switch input:disabled+*{cursor:not-allowed}
+/* Entering the Google Ads sign-in details on the Health tab. Its own names for
+   the same reason .gsw-switch has one: none of this is a table column, and the
+   table's widths must never be able to reach it. */
+.gsw-creds{display:grid;gap:0.75rem;padding:0.75rem 0.875rem;border:1px solid var(--color-border);border-radius:var(--radius-md);background:var(--color-bg-subtle)}
+.gsw-creds-summary{justify-self:start;appearance:none;border:0;background:transparent;padding:0;font:inherit;font-size:0.875rem;font-weight:600;color:var(--color-text);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.gsw-creds-summary:hover{color:var(--color-primary)}
+.gsw-creds-summary:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:2px}
+.gsw-creds-steps{margin:0;padding-left:1.25rem;display:grid;gap:0.375rem;font-size:0.875rem;color:var(--color-text-secondary);max-width:80ch}
+.gsw-creds-steps strong{color:var(--color-text)}
+.gsw-creds-form{display:grid;gap:0.75rem}
+.gsw-creds-actions{display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center}
+.gsw-field{display:grid;gap:0.25rem;min-width:0}
+.gsw-field-label{font-size:0.875rem;font-weight:600;color:var(--color-text)}
+.gsw-field-optional{margin-left:0.375rem;font-weight:400;font-size:0.75rem;color:var(--color-text-secondary)}
+.gsw-field-where{margin:0;font-size:0.8125rem;color:var(--color-text-secondary);max-width:80ch}
+.gsw-field-row{display:flex;flex-wrap:wrap;gap:0.375rem;align-items:center}
+.gsw-field-row input{flex:1 1 18rem;min-width:0;padding:0.375rem 0.5rem;font:inherit;font-size:0.875rem;color:var(--color-text);background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md)}
+.gsw-field-row input:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:1px}
+.gsw-field-state{font-size:0.75rem;color:var(--color-text-secondary)}
+.gsw-field-state.is-set{color:var(--color-success)}
 .gsw-col-product{width:34%}
 .gsw-col-google{width:22%}
 .gsw-empty{padding:2.5rem 1rem;text-align:center;color:var(--color-text-secondary)}
