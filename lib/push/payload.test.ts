@@ -4,8 +4,10 @@ import {
   buildProductInput,
   fromMicros,
   googleAvailability,
+  googleShowsSameOffer,
   sameSnapshot,
   snapshotFromProduct,
+  snapshotFromStored,
   snapshotOf,
   toMicros,
 } from '@/modules/google-shopping-for-shop/lib/push/payload'
@@ -107,6 +109,54 @@ describe('sameSnapshot', () => {
       { price: 900, currency: 'GBP', availability: 'IN_STOCK' },
       { price: 900, salePrice: 750, currency: 'GBP', availability: 'IN_STOCK' },
     )).toBe(false)
+  })
+})
+
+describe('googleShowsSameOffer', () => {
+  const sent = (price: number, salePrice?: number) => ({
+    price, ...(salePrice === undefined ? {} : { salePrice }), currency: 'GBP', availability: 'IN_STOCK' as const,
+  })
+
+  it('agrees when Google files the page’s "was" price above the figure we sent', () => {
+    // The live case: an RRP published on the page as a strikethrough price.
+    expect(googleShowsSameOffer(sent(153.6), sent(391.2, 153.6))).toBe(true)
+    // An offer we sent, with the page's RRP standing in for our regular price.
+    expect(googleShowsSameOffer(sent(400, 300), sent(450, 300))).toBe(true)
+  })
+
+  it('agrees when every figure matches', () => {
+    expect(googleShowsSameOffer(sent(900, 750), sent(900, 750))).toBe(true)
+    expect(googleShowsSameOffer(sent(900), sent(900))).toBe(true)
+  })
+
+  it('differs when the figure to pay is not ours', () => {
+    expect(googleShowsSameOffer(sent(153.6), sent(391.2))).toBe(false)
+    expect(googleShowsSameOffer(sent(153.6), sent(391.2, 150))).toBe(false)
+    expect(googleShowsSameOffer(sent(900, 750), sent(900))).toBe(false)
+  })
+
+  it('differs when an offer we sent was dropped for its own price', () => {
+    expect(googleShowsSameOffer(sent(400, 300), sent(300))).toBe(false)
+  })
+
+  it('differs on currency or stock whatever the prices say', () => {
+    expect(googleShowsSameOffer(sent(900), { ...sent(900), currency: 'EUR' })).toBe(false)
+    expect(googleShowsSameOffer(sent(900), { ...sent(900), availability: 'OUT_OF_STOCK' })).toBe(false)
+  })
+})
+
+describe('snapshotFromStored', () => {
+  it('reads back what a reconcile stored', () => {
+    expect(snapshotFromStored({ price: 391.2, salePrice: 153.6, currency: 'GBP', availability: 'IN_STOCK' }))
+      .toEqual({ price: 391.2, salePrice: 153.6, currency: 'GBP', availability: 'IN_STOCK' })
+    expect(snapshotFromStored({ price: 900, currency: 'GBP', availability: 'IN_STOCK' }))
+      .toEqual({ price: 900, currency: 'GBP', availability: 'IN_STOCK' })
+  })
+
+  it('is null for a missing product or anything half-formed', () => {
+    expect(snapshotFromStored(null)).toBeNull()
+    expect(snapshotFromStored({ price: '900', currency: 'GBP', availability: 'IN_STOCK' })).toBeNull()
+    expect(snapshotFromStored({ price: 900, currency: 'GBP', availability: 'in stock' })).toBeNull()
   })
 })
 

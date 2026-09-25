@@ -95,6 +95,51 @@ export function sameSnapshot(a: PushSnapshot, b: PushSnapshot): boolean {
     && a.availability === b.availability
 }
 
+/** The figure a shopper actually pays: the offer where one is running, the
+ *  regular price where not. */
+function payable(snapshot: PushSnapshot): number {
+  return snapshot.salePrice ?? snapshot.price
+}
+
+/**
+ * True when Google is showing the offer this site sent. What the hourly check
+ * asks, and deliberately looser than `sameSnapshot`, which asks whether we have
+ * already sent something.
+ *
+ * Google does not only read what it is sent. It also reads the product page,
+ * and a page that publishes a struck-through "was" price (schema.org
+ * StrikethroughPrice - an RRP, say) is filed by Merchant Center as the regular
+ * price, with the figure we sent moved down into the sale price. Sent £153.60,
+ * Google showing "£391.20, on offer at £153.60": that is the page, word for
+ * word, and not a disagreement.
+ *
+ * So the price to pay, the currency and the stock have to match, and the
+ * regular price has to match too UNLESS Google is showing a "was" figure of its
+ * own. What that still catches: an offer we sent that Google dropped (it would
+ * be showing the regular price with no offer), and any figure to pay that is
+ * not ours.
+ */
+export function googleShowsSameOffer(sent: PushSnapshot, google: PushSnapshot): boolean {
+  return payable(sent) === payable(google)
+    && (sent.price === google.price || google.salePrice !== undefined)
+    && sent.currency === google.currency
+    && sent.availability === google.availability
+}
+
+/** A snapshot as it was stored in a reconcile detail, read back. Null for
+ *  anything that is not one - including a Google side recorded as missing. */
+export function snapshotFromStored(value: unknown): PushSnapshot | null {
+  if (typeof value !== 'object' || value === null) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.price !== 'number' || typeof row.currency !== 'string' || !isGoogleAvailability(row.availability)) return null
+  return {
+    price: row.price,
+    ...(typeof row.salePrice === 'number' ? { salePrice: row.salePrice } : {}),
+    currency: row.currency,
+    availability: row.availability,
+  }
+}
+
 /**
  * The insert body for one item.
  *

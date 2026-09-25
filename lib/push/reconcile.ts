@@ -23,8 +23,14 @@ import { GoogleApiError } from '@/modules/google-shopping-for-shop/lib/google/er
 import { productResourceSegment } from '@/modules/google-shopping-for-shop/lib/health/parse'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { syncPushAlert } from '@/modules/google-shopping-for-shop/lib/push/alert'
-import { sameSnapshot, snapshotFromProduct } from '@/modules/google-shopping-for-shop/lib/push/payload'
-import { recordReconcile, recordReconcileRun, sampleForReconcile } from '@/modules/google-shopping-for-shop/lib/push/store'
+import { googleShowsSameOffer, snapshotFromProduct, snapshotFromStored } from '@/modules/google-shopping-for-shop/lib/push/payload'
+import {
+  readDisagreements,
+  recordReconcile,
+  recordReconcileRun,
+  sampleForReconcile,
+  settleDisagreement,
+} from '@/modules/google-shopping-for-shop/lib/push/store'
 import type { PushSnapshot } from '@/modules/google-shopping-for-shop/lib/push/types'
 
 /** Merchant Center processes an input asynchronously, so an item asked about
@@ -36,6 +42,10 @@ const GRACE_MINUTES = 120
 /** One retry per item and no more. This runs on a timer with a whole cron's
  *  worth of other jobs behind it. */
 const ATTEMPTS = 2
+
+/** How many stored disagreements are looked at again per run. The panel shows
+ *  twenty; this is comfortably more, and it costs no calls to Google. */
+const RESCORE_LIMIT = 100
 
 export type ReconcileOutcome =
   | { status: 'ok'; checked: number; agrees: number; differs: number; unread: number; missing: number }
@@ -60,6 +70,25 @@ function skip(reason: Exclude<ReconcileOutcome, { status: 'ok' }>['reason']): Re
 type Difference = { sent: PushSnapshot; google: PushSnapshot; checkedAt: string }
 
 /**
+ * Looks again at the disagreements already on record, with the comparison as it
+ * stands now, and clears any it no longer counts.
+ *
+ * The sample walks the whole catalogue before it comes back to an item, which
+ * on a shop of any size is days. A disagreement recorded by an older, stricter
+ * comparison would otherwise sit on the Health tab all that time, flagging
+ * something this module has since decided is fine. Both sides of it are stored,
+ * so no call to Google is needed to settle it. A Google side recorded as
+ * missing is never settled here: there is nothing to compare.
+ */
+async function rescoreDisagreements(): Promise<void> {
+  for (const row of await readDisagreements(RESCORE_LIMIT)) {
+    const detail = row.reconcileDetail as { google?: unknown } | null
+    const google = snapshotFromStored(detail?.google)
+    if (google && googleShowsSameOffer(row.snapshot, google)) await settleDisagreement(row.itemId)
+  }
+}
+
+/**
  * Compares a sample of what we sent against what Google holds.
  *
  * Never throws for a Google refusal - the cron has other jobs and must not lose
@@ -76,6 +105,8 @@ export async function runPushReconcile(): Promise<ReconcileOutcome> {
   if (!settings.merchantId) return skip('no-merchant-id')
   if (!settings.feedLabel) return skip('no-feed-label')
   if (!settings.pushDataSourceId) return skip('not-set-up')
+
+  await rescoreDisagreements()
 
   const sample = await sampleForReconcile(settings.pushReconcileSample, GRACE_MINUTES)
   if (sample.length === 0) return skip('nothing-to-check')
@@ -128,7 +159,7 @@ export async function runPushReconcile(): Promise<ReconcileOutcome> {
       continue
     }
 
-    if (sameSnapshot(row.snapshot, google)) {
+    if (googleShowsSameOffer(row.snapshot, google)) {
       agrees++
       await recordReconcile(row.itemId, 'agrees', null)
     } else {

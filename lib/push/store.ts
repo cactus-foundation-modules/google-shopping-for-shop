@@ -306,6 +306,18 @@ export async function recordReconcile(itemId: string, result: 'agrees' | 'differ
   `
 }
 
+/** Takes an item off the disagreements list without asking Google again: the
+ *  reading already stored is one the comparison no longer counts as different.
+ *  The time of the comparison is left alone, because nothing new was read. */
+export async function settleDisagreement(itemId: string): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE "gsf_push_state"
+    SET "reconcile_result" = 'agrees',
+        "reconcile_detail" = NULL
+    WHERE "item_id" = ${itemId} AND "reconcile_result" = 'differs'
+  `
+}
+
 export type PushTotals = {
   tracked: number
   unconfirmed: number

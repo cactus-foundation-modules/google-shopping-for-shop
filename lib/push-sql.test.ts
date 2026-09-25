@@ -311,6 +311,25 @@ describe.skipIf(!cfg)('google-shopping live updates SQL against a real database'
     expect((rows[0]?.reconcileDetail as { google: { price: number } }).google.price).toBe(950)
   })
 
+  it('settles a stored disagreement without touching the time it was checked', async () => {
+    await store.recordSent('item-1', 'item-1', { price: 153.6, currency: 'GBP', availability: 'IN_STOCK' }, true)
+    await store.recordSent('item-2', 'item-2', { price: 10, currency: 'GBP', availability: 'IN_STOCK' }, true)
+    await store.recordReconcile('item-1', 'differs', { google: { price: 391.2, salePrice: 153.6, currency: 'GBP', availability: 'IN_STOCK' } })
+    await store.recordReconcile('item-2', 'agrees', null)
+    const before = (await store.readDisagreements(10))[0]?.reconciledAt
+
+    await store.settleDisagreement('item-1')
+    // An item that already agrees is left exactly as it was.
+    await store.settleDisagreement('item-2')
+
+    expect(await store.readDisagreements(10)).toEqual([])
+    const state = await store.readAllPushState()
+    expect(state.get('item-1')?.reconcileResult).toBe('agrees')
+    expect(state.get('item-1')?.reconcileDetail).toBeNull()
+    expect(state.get('item-1')?.reconciledAt?.getTime()).toBe(before?.getTime())
+    expect(state.get('item-2')?.reconcileResult).toBe('agrees')
+  })
+
   it('counts what is wrong without confusing the three kinds of wrong', async () => {
     await store.recordSent('good', 'good', { price: 1, currency: 'GBP', availability: 'IN_STOCK' }, true)
     await store.recordSent('unread', 'unread', { price: 2, currency: 'GBP', availability: 'IN_STOCK' }, false)

@@ -436,7 +436,8 @@ export function LiveUpdatesPanel() {
         <>
           <p className="gsh-panel-note">
             <strong>Google is showing something else.</strong> These were sent and taken, and the hourly check found Merchant Center
-            holding a different figure. Both sides are below; they are sent again on the next run.
+            holding a different figure to pay, or different stock. Both sides are below. Nothing is sent again until the
+            product itself changes; the hourly check comes back to each one as it works its way round the shop.
           </p>
           <ul className="gsh-issues">
             {view.disagreements.map((row) => (

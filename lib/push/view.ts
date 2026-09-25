@@ -18,6 +18,7 @@ import {
   readRecentFailures,
   type PushStateRow,
 } from '@/modules/google-shopping-for-shop/lib/push/store'
+import { snapshotFromStored } from '@/modules/google-shopping-for-shop/lib/push/payload'
 import type { PushSnapshot } from '@/modules/google-shopping-for-shop/lib/push/types'
 
 /** A run that claimed the slot and has not let go for longer than this is
@@ -96,18 +97,6 @@ export type LiveUpdatesView = {
   disagreements: LiveUpdateDisagreement[]
 }
 
-function readSnapshot(value: unknown): PushSnapshot | null {
-  if (typeof value !== 'object' || value === null) return null
-  const row = value as Record<string, unknown>
-  if (typeof row.price !== 'number' || typeof row.currency !== 'string' || typeof row.availability !== 'string') return null
-  return {
-    price: row.price,
-    ...(typeof row.salePrice === 'number' ? { salePrice: row.salePrice } : {}),
-    currency: row.currency,
-    availability: row.availability as PushSnapshot['availability'],
-  }
-}
-
 /** The console's page for one item, when there is an account to point at. */
 function itemUrl(merchantId: string | null, feedLabel: string | null, offerId: string): string | null {
   return merchantId ? merchantCentreItemUrl({ merchantId, offerId, feedLabel }) : null
@@ -129,7 +118,7 @@ function toDisagreement(row: PushStateRow, merchantId: string | null, feedLabel:
     itemId: row.itemId,
     merchantCentreUrl: itemUrl(merchantId, feedLabel, row.itemId),
     sent: row.snapshot,
-    google: readSnapshot(detail?.google),
+    google: snapshotFromStored(detail?.google),
     checkedAt: typeof detail?.checkedAt === 'string'
       ? detail.checkedAt
       : (row.reconciledAt ?? row.sentAt).toISOString(),
