@@ -3,6 +3,9 @@
 // Sub-tab of shop's settings tab, hosted through 'shop.settings-sub-tabs'.
 // Shop lends the space and nothing else: own fetch, own save, own module API.
 import { useCallback, useEffect, useState } from 'react'
+import { TabStrip } from '@/components/admin/TabStrip'
+import { useTabParam } from '@/components/admin/useTabParam'
+import { SettingsHeaderActions, SettingsHeaderStatus } from '@/components/admin/SettingsHeaderActions'
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfLabelSource, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
 import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components/GoogleAccessCheck'
@@ -48,7 +51,17 @@ const OPT_IN_STYLE_LABELS: Record<GsfOptInStyle, string> = {
   BOTTOM_TRAY: 'A tray along the bottom',
 }
 
+const SUB_TABS = [
+  { key: 'feed', label: 'Feed' },
+  { key: 'merchant', label: 'Merchant Center' },
+  { key: 'delivery', label: 'Delivery' },
+  { key: 'promotions', label: 'Discounts' },
+  { key: 'reviews', label: 'Customer reviews' },
+] as const
+type SubTab = typeof SUB_TABS[number]['key']
+
 export function GoogleShoppingSettingsTab() {
+  const [sub, setSub] = useTabParam<SubTab>('view', 'feed', SUB_TABS.map((t) => t.key))
   const [settings, setSettings] = useState<GsfSettingsView | null>(null)
   const [envStatus, setEnvStatus] = useState<Record<string, boolean>>({})
   const [credentialDraft, setCredentialDraft] = useState('')
@@ -174,6 +187,30 @@ export function GoogleShoppingSettingsTab() {
     }
   }
 
+  // Everything typed into a box and not yet saved goes up with one button. The
+  // switches and dropdowns save themselves the moment they are touched, as they
+  // always have; it is only the boxes that wait for a click.
+  const draftPatch: Parameters<typeof save>[0] = settings
+    ? {
+        ...(merchantDraft !== settings.merchantId ? { merchantId: merchantDraft } : {}),
+        ...(feedLabelDraft !== settings.feedLabel ? { feedLabel: feedLabelDraft } : {}),
+        ...(brandDraft !== settings.defaultBrand ? { defaultBrand: brandDraft.trim() } : {}),
+        ...(countryDraft !== settings.shippingCountry ? { shippingCountry: countryDraft } : {}),
+        ...(thresholdDraft.trim() !== '' && Number(thresholdDraft) !== settings.disapprovalAlertThreshold
+          ? { disapprovalAlertThreshold: Math.max(0, Math.round(Number(thresholdDraft) || 0)) } : {}),
+        ...(alertEmailDraft !== settings.alertEmail ? { alertEmail: alertEmailDraft } : {}),
+        ...(dataSourceDraft !== settings.feedDataSourceId ? { feedDataSourceId: dataSourceDraft } : {}),
+        ...(deliveryDaysDraft !== String(settings.customerReviewsDeliveryDays) && /^\d+$/.test(deliveryDaysDraft)
+          ? { customerReviewsDeliveryDays: Number(deliveryDaysDraft) } : {}),
+      }
+    : {}
+  const hasPendingDrafts = Object.keys(draftPatch).length > 0 || credentialDraft.trim() !== ''
+
+  async function saveAll() {
+    if (credentialDraft.trim() !== '') await saveCredential()
+    if (Object.keys(draftPatch).length > 0) await save(draftPatch)
+  }
+
   if (!settings) {
     return error
       ? <p role="alert" style={{ color: 'var(--color-danger)' }}>{error}</p>
@@ -182,6 +219,19 @@ export function GoogleShoppingSettingsTab() {
 
   return (
     <div>
+      <TabStrip
+        items={SUB_TABS.map((t) => ({ key: t.key, label: t.label, active: t.key === sub, onClick: () => setSub(t.key) }))}
+      />
+
+      <SettingsHeaderActions>
+        <SettingsHeaderStatus message={saved || savedCredential ? 'Saved' : null} error={error} />
+        <button type="button" className="btn btn-primary" disabled={saving || savingCredential || !hasPendingDrafts} onClick={() => void saveAll()}>
+          {saving || savingCredential ? 'Saving…' : 'Save changes'}
+        </button>
+      </SettingsHeaderActions>
+
+      {sub === 'feed' && (
+        <div className="settings-masonry">
       <section style={card}>
         <h3 style={legend}>Google Shopping feed</h3>
         <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
@@ -264,6 +314,98 @@ export function GoogleShoppingSettingsTab() {
       </section>
 
       <section style={card}>
+        <h3 style={legend}>Defaults</h3>
+        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Brand</span>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={brandDraft}
+              placeholder="e.g. your own trading name"
+              onChange={(e) => setBrandDraft(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+          <span style={hint}>The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
+        </label>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.brandFromSupplier}
+            disabled={saving}
+            onChange={(e) => void save({ brandFromSupplier: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Use the supplier as the brand</span>
+            <span style={hint}>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</span>
+          </span>
+        </label>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.mpnFromSku}
+            disabled={saving}
+            onChange={(e) => void save({ mpnFromSku: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your product codes as the maker&rsquo;s part number</span>
+            <span style={hint}>
+              Google files your listing alongside everyone else&rsquo;s selling the same thing by barcode first, and by brand and part
+              number second. If your product codes are the maker&rsquo;s own - the codes off their price list, printed on the box - this
+              is what puts you in the same place as every other shop selling it, rather than on a page of your own. Each variation sends
+              its own code. Leave it off if your codes are your own invention or something you would rather not publish: it tells the
+              world what you call your stock, and a part number nobody else uses matches nothing anyway.
+            </span>
+          </span>
+        </label>
+        <label style={{ display: 'block', marginTop: '1rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
+          <select
+            value={settings.defaultCondition}
+            disabled={saving}
+            onChange={(e) => void save({ defaultCondition: e.target.value as GsfCondition })}
+            style={{ ...inputStyle, maxWidth: 220 }}
+          >
+            {GSF_CONDITIONS.map((c) => (
+              <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
+            ))}
+          </select>
+          <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
+        </label>
+      </section>
+
+      <section style={card}>
+        <h3 style={legend}>Photographs</h3>
+        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.parentImagesOnVariations}
+            disabled={saving}
+            onChange={(e) => void save({ parentImagesOnVariations: e.target.checked })}
+            style={{ marginTop: '0.2rem' }}
+          />
+          <span>
+            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send the listing&rsquo;s photographs with every variation</span>
+            <span style={hint}>
+              Each variation leads with its own pictures, as it does now, and the rest of the listing&rsquo;s gallery follows behind
+              them - the room shot, the close-up, the dimensions drawing - so a variation photographed once is not sent to Google on
+              one picture. Any listing photograph that belongs to another variation is left out, so a black desk is never shown in
+              oak. Google takes eleven pictures an item and ignores the rest. Leave this off if your listings show their other
+              finishes in photographs that are not filed against those variations here, because nothing can tell those apart.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <CategoryTaxonomySection />
+        </div>
+      )}
+
+      {sub === 'merchant' && (
+        <div className="settings-masonry">
+      <section style={card}>
         <h3 style={legend}>Your Merchant Center account</h3>
         <span style={hint}>
           Fill these in and every product gains a link straight to its own listing in Merchant Center, one per variation, on the
@@ -280,14 +422,6 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setMerchantDraft(e.target.value)}
               style={{ ...inputStyle, maxWidth: 220 }}
             />
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={saving || merchantDraft === settings.merchantId}
-              onClick={() => void save({ merchantId: merchantDraft })}
-            >
-              Save account
-            </button>
           </div>
           <span style={hint}>Merchant Center shows it at the top right of its own pages. Spaces and dashes are fine - only the numbers are kept.</span>
         </label>
@@ -301,14 +435,6 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setFeedLabelDraft(e.target.value)}
               style={{ ...inputStyle, maxWidth: 160 }}
             />
-            <button
-              type="button"
-              className="btn"
-              disabled={saving || feedLabelDraft === settings.feedLabel}
-              onClick={() => void save({ feedLabel: feedLabelDraft })}
-            >
-              Save label
-            </button>
           </div>
           <span style={hint}>Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
         </label>
@@ -340,15 +466,6 @@ export function GoogleShoppingSettingsTab() {
             />
             <span style={hint}>Cactus stores this as a Vercel environment variable. Paste a new JSON key here whenever you need to replace it.</span>
           </label>
-          <button
-            type="button"
-            className="btn"
-            disabled={savingCredential || credentialDraft.trim() === ''}
-            onClick={() => void saveCredential()}
-            style={{ marginTop: '0.75rem' }}
-          >
-            {savingCredential ? 'Saving…' : savedCredential ? 'Saved' : 'Save API key'}
-          </button>
           <GoogleAccessCheck />
         </div>
       </section>
@@ -373,14 +490,6 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setThresholdDraft(e.target.value)}
               style={{ ...inputStyle, maxWidth: 140 }}
             />
-            <button
-              type="button"
-              className="btn"
-              disabled={saving || Number(thresholdDraft) === settings.disapprovalAlertThreshold || thresholdDraft.trim() === ''}
-              onClick={() => void save({ disapprovalAlertThreshold: Math.max(0, Math.round(Number(thresholdDraft) || 0)) })}
-            >
-              Save
-            </button>
           </div>
           <span style={hint}>
             Counted against the day before, so a shop that has always had a few turned down is not nagged about them. Set it to 0 and
@@ -416,14 +525,6 @@ export function GoogleShoppingSettingsTab() {
                 onChange={(e) => setAlertEmailDraft(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 320 }}
               />
-              <button
-                type="button"
-                className="btn"
-                disabled={saving || alertEmailDraft === settings.alertEmail}
-                onClick={() => void save({ alertEmail: alertEmailDraft })}
-              >
-                Save address
-              </button>
             </div>
             {settings.alertEmailEnabled && settings.alertEmail === '' && (
               <span style={{ ...hint, color: 'var(--color-warning)' }}>
@@ -455,19 +556,16 @@ export function GoogleShoppingSettingsTab() {
                 onChange={(e) => setDataSourceDraft(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 260 }}
               />
-              <button
-                type="button"
-                className="btn"
-                disabled={saving || dataSourceDraft === settings.feedDataSourceId}
-                onClick={() => void save({ feedDataSourceId: dataSourceDraft })}
-              >
-                Save feed
-              </button>
             </div>
           </label>
         </div>
       </section>
 
+        </div>
+      )}
+
+      {sub === 'delivery' && (
+        <div className="settings-masonry">
       <section style={card}>
         <h3 style={legend}>Delivery</h3>
         <span style={hint}>
@@ -508,14 +606,6 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setCountryDraft(e.target.value.toUpperCase())}
               style={{ ...inputStyle, maxWidth: 120 }}
             />
-            <button
-              type="button"
-              className="btn"
-              disabled={saving || countryDraft === settings.shippingCountry}
-              onClick={() => void save({ shippingCountry: countryDraft })}
-            >
-              Save country
-            </button>
           </div>
           <span style={hint}>Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
         </label>
@@ -601,29 +691,11 @@ export function GoogleShoppingSettingsTab() {
         </label>
       </section>
 
-      <section style={card}>
-        <h3 style={legend}>Photographs</h3>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
-          <input
-            type="checkbox"
-            checked={settings.parentImagesOnVariations}
-            disabled={saving}
-            onChange={(e) => void save({ parentImagesOnVariations: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
-          />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send the listing&rsquo;s photographs with every variation</span>
-            <span style={hint}>
-              Each variation leads with its own pictures, as it does now, and the rest of the listing&rsquo;s gallery follows behind
-              them - the room shot, the close-up, the dimensions drawing - so a variation photographed once is not sent to Google on
-              one picture. Any listing photograph that belongs to another variation is left out, so a black desk is never shown in
-              oak. Google takes eleven pictures an item and ignores the rest. Leave this off if your listings show their other
-              finishes in photographs that are not filed against those variations here, because nothing can tell those apart.
-            </span>
-          </span>
-        </label>
-      </section>
+        </div>
+      )}
 
+      {sub === 'promotions' && (
+        <div className="settings-masonry">
       <section style={card}>
         <h3 style={legend}>Discounts on your listings</h3>
         <span style={hint}>
@@ -725,6 +797,11 @@ export function GoogleShoppingSettingsTab() {
         )}
       </section>
 
+        </div>
+      )}
+
+      {sub === 'reviews' && (
+        <div className="settings-masonry">
       <section style={card}>
         <h3 style={legend}>Customer reviews on Google</h3>
         <span style={hint}>
@@ -820,14 +897,6 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setDeliveryDaysDraft(e.target.value)}
               style={{ ...inputStyle, maxWidth: 120 }}
             />
-            <button
-              type="button"
-              className="btn"
-              disabled={saving || deliveryDaysDraft === String(settings.customerReviewsDeliveryDays) || !/^\d+$/.test(deliveryDaysDraft)}
-              onClick={() => void save({ customerReviewsDeliveryDays: Number(deliveryDaysDraft) })}
-            >
-              Save days
-            </button>
           </div>
           <span style={hint}>
             Google has to be told roughly when the parcel lands so it knows when to write. Where a delivery module can say for a
@@ -840,81 +909,8 @@ export function GoogleShoppingSettingsTab() {
         </span>
       </section>
 
-      <section style={card}>
-        <h3 style={legend}>Defaults</h3>
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
-          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Brand</span>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              value={brandDraft}
-              placeholder="e.g. your own trading name"
-              onChange={(e) => setBrandDraft(e.target.value)}
-              style={inputStyle}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={saving || brandDraft === settings.defaultBrand}
-              onClick={() => void save({ defaultBrand: brandDraft.trim() })}
-            >
-              Save brand
-            </button>
-          </div>
-          <span style={hint}>The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
-        </label>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
-          <input
-            type="checkbox"
-            checked={settings.brandFromSupplier}
-            disabled={saving}
-            onChange={(e) => void save({ brandFromSupplier: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
-          />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Use the supplier as the brand</span>
-            <span style={hint}>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</span>
-          </span>
-        </label>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
-          <input
-            type="checkbox"
-            checked={settings.mpnFromSku}
-            disabled={saving}
-            onChange={(e) => void save({ mpnFromSku: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
-          />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your product codes as the maker&rsquo;s part number</span>
-            <span style={hint}>
-              Google files your listing alongside everyone else&rsquo;s selling the same thing by barcode first, and by brand and part
-              number second. If your product codes are the maker&rsquo;s own - the codes off their price list, printed on the box - this
-              is what puts you in the same place as every other shop selling it, rather than on a page of your own. Each variation sends
-              its own code. Leave it off if your codes are your own invention or something you would rather not publish: it tells the
-              world what you call your stock, and a part number nobody else uses matches nothing anyway.
-            </span>
-          </span>
-        </label>
-        <label style={{ display: 'block', marginTop: '1rem' }}>
-          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
-          <select
-            value={settings.defaultCondition}
-            disabled={saving}
-            onChange={(e) => void save({ defaultCondition: e.target.value as GsfCondition })}
-            style={{ ...inputStyle, maxWidth: 220 }}
-          >
-            {GSF_CONDITIONS.map((c) => (
-              <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
-            ))}
-          </select>
-          <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
-        </label>
-      </section>
-
-      <CategoryTaxonomySection />
-
-      {saved && <p style={{ color: 'var(--color-success, var(--color-text))', fontSize: '0.875rem' }}>Saved.</p>}
-      {error && <p role="alert" style={{ color: 'var(--color-danger)', fontSize: '0.875rem' }}>{error}</p>}
+        </div>
+      )}
     </div>
   )
 }
