@@ -12,14 +12,6 @@ import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
-const card = {
-  border: '1px solid var(--color-border)',
-  borderRadius: 12,
-  padding: '1rem 1.25rem',
-  background: 'var(--color-surface)',
-  marginBottom: '1.25rem',
-} as const
-
 const legend = { fontSize: '0.9375rem', fontWeight: 600, margin: '0 0 0.25rem' } as const
 const hint = { display: 'block', fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' } as const
 const inputStyle = {
@@ -232,7 +224,7 @@ export function GoogleShoppingSettingsTab() {
 
       {sub === 'feed' && (
         <div className="settings-masonry">
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Google Shopping feed</h3>
         <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
           <input
@@ -249,7 +241,7 @@ export function GoogleShoppingSettingsTab() {
         </label>
       </section>
 
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Feed address</h3>
         <span style={hint}>
           Paste this into Google Merchant Center (Products → Data sources → Add a file → scheduled fetch). Google re-reads it on its own
@@ -313,9 +305,9 @@ export function GoogleShoppingSettingsTab() {
         )}
       </section>
 
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Defaults</h3>
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Brand</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -327,6 +319,20 @@ export function GoogleShoppingSettingsTab() {
             />
           </div>
           <span style={hint}>The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
+        </label>
+        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
+          <select
+            value={settings.defaultCondition}
+            disabled={saving}
+            onChange={(e) => void save({ defaultCondition: e.target.value as GsfCondition })}
+            style={{ ...inputStyle, maxWidth: 220 }}
+          >
+            {GSF_CONDITIONS.map((c) => (
+              <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
+            ))}
+          </select>
+          <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
         </label>
         <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
           <input
@@ -360,23 +366,9 @@ export function GoogleShoppingSettingsTab() {
             </span>
           </span>
         </label>
-        <label style={{ display: 'block', marginTop: '1rem' }}>
-          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
-          <select
-            value={settings.defaultCondition}
-            disabled={saving}
-            onChange={(e) => void save({ defaultCondition: e.target.value as GsfCondition })}
-            style={{ ...inputStyle, maxWidth: 220 }}
-          >
-            {GSF_CONDITIONS.map((c) => (
-              <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
-            ))}
-          </select>
-          <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
-        </label>
       </section>
 
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Photographs</h3>
         <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
           <input
@@ -405,13 +397,13 @@ export function GoogleShoppingSettingsTab() {
 
       {sub === 'merchant' && (
         <div className="settings-masonry">
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Your Merchant Center account</h3>
         <span style={hint}>
           Fill these in and every product gains a link straight to its own listing in Merchant Center, one per variation, on the
           product&apos;s Google Shopping tab. Nothing else depends on them - the feed works perfectly well without.
         </span>
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Account number</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -425,7 +417,7 @@ export function GoogleShoppingSettingsTab() {
           </div>
           <span style={hint}>Merchant Center shows it at the top right of its own pages. Spaces and dashes are fine - only the numbers are kept.</span>
         </label>
-        <label style={{ display: 'block', marginTop: '1rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Feed label</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -470,7 +462,7 @@ export function GoogleShoppingSettingsTab() {
         </div>
       </section>
 
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Health checks and alerts</h3>
         <span style={hint}>
           Once a day Cactus asks Google what it makes of your products and whether it managed to read your feed at all. What comes
@@ -478,7 +470,7 @@ export function GoogleShoppingSettingsTab() {
           about it.
         </span>
 
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Tell me when this many products stop being shown at once</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <input
@@ -566,7 +558,7 @@ export function GoogleShoppingSettingsTab() {
 
       {sub === 'delivery' && (
         <div className="settings-masonry">
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Delivery</h3>
         <span style={hint}>
           Google can be told your own delivery charges and how long each service takes, product by product, instead of working from the
@@ -595,7 +587,7 @@ export function GoogleShoppingSettingsTab() {
             </span>
           </span>
         </label>
-        <label style={{ display: 'block', marginTop: '1rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Country these charges apply to</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -616,7 +608,7 @@ export function GoogleShoppingSettingsTab() {
           rate for each group over in Merchant Center. Useful where what you charge depends on what the thing is - a chair, a desk,
           something made to order - rather than on the product itself.
         </span>
-        <label style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Where the group comes from</span>
           <select
             value={settings.shippingLabelSource}
@@ -650,7 +642,7 @@ export function GoogleShoppingSettingsTab() {
             module and this fills itself in.
           </p>
         )}
-        <label style={{ display: settings.shippingLabelSource === 'attribute' ? 'block' : 'none', marginTop: '0.75rem' }}>
+        <label className="settings-field" style={{ display: settings.shippingLabelSource === 'attribute' ? 'block' : 'none', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Group by</span>
           <select
             value={settings.shippingLabelAttributeId}
@@ -696,7 +688,7 @@ export function GoogleShoppingSettingsTab() {
 
       {sub === 'promotions' && (
         <div className="settings-masonry">
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Discounts on your listings</h3>
         <span style={hint}>
           If you take money off once a basket holds enough of one supplier&apos;s goods, Google can print that on the listings
@@ -802,7 +794,7 @@ export function GoogleShoppingSettingsTab() {
 
       {sub === 'reviews' && (
         <div className="settings-masonry">
-      <section style={card}>
+      <section className="card">
         <h3 style={legend}>Customer reviews on Google</h3>
         <span style={hint}>
           Two separate things, and a shop can have either on its own: sending Google the reviews people leave here, and letting Google
@@ -872,7 +864,7 @@ export function GoogleShoppingSettingsTab() {
             Nothing will appear until your Merchant Center account number is filled in above - Google will not take a survey without one.
           </p>
         )}
-        <label style={{ display: 'block', marginTop: '1rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Where it appears</span>
           <select
             value={settings.customerReviewsStyle}
@@ -886,7 +878,7 @@ export function GoogleShoppingSettingsTab() {
           </select>
           <span style={hint}>Google&apos;s own finding is that a box tucked in a corner gets said yes to far less often than one in the middle.</span>
         </label>
-        <label style={{ display: 'block', marginTop: '1rem' }}>
+        <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Usual working days to delivery</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
