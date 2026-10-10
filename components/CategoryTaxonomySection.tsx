@@ -6,6 +6,7 @@
 // is otherwise a page of switches.
 import { useCallback, useEffect, useState } from 'react'
 import type { GsfCategoryTaxonomyRow } from '@/modules/google-shopping-for-shop/lib/types'
+import { InfoTip } from '@/components/admin/InfoTip'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -99,13 +100,7 @@ export function CategoryTaxonomySection() {
 
   return (
     <section style={card}>
-      <h3 style={legend}>Google&rsquo;s own categories</h3>
-      <span style={hint}>
-        Google keeps a list of every kind of thing anyone sells, and knowing which one a product is decides where it can be shown and
-        what Google expects to be told about it. Your own categories go along too, but they are your wording - this is Google&rsquo;s.
-        Find yours in Google&rsquo;s product taxonomy and paste either the number or the full wording, such as{' '}
-        <code>Furniture &gt; Chairs &gt; Office Chairs</code>.
-      </span>
+      <h3 style={legend}>Google&rsquo;s own categories <InfoTip>Google keeps a list of every kind of thing anyone sells, and knowing which one a product is decides where it can be shown and what Google expects to be told about it. Your own categories go along too, but they are your wording - this is Google&rsquo;s. Find yours in Google&rsquo;s product taxonomy and paste either the number or the full wording, such as{' '} <code>Furniture &gt; Chairs &gt; Office Chairs</code>.</InfoTip></h3>
       <span style={hint}>
         One per category, not per product. A category you leave blank uses whatever its parent says, so the top of your tree usually
         does most of the work. Anything set on an individual product, on its own Google Shopping tab, still wins.

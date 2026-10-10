@@ -9,6 +9,7 @@ import { SettingsHeaderActions, SettingsHeaderStatus } from '@/components/admin/
 import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfLabelSource, type GsfOptInStyle, type GsfSettingsView } from '@/modules/google-shopping-for-shop/lib/types'
 import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
 import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components/GoogleAccessCheck'
+import { InfoTip } from '@/components/admin/InfoTip'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -225,39 +226,20 @@ export function GoogleShoppingSettingsTab() {
       {sub === 'feed' && (
         <div className="settings-masonry">
       <section className="card">
-        <h3 style={legend}>Google Shopping feed</h3>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
-          <input
+        <h3 className="card-title">Product feed <InfoTip>Paste this into Google Merchant Center (Products → Data sources → Add a file → scheduled fetch). Google re-reads it on its own schedule; every product variation goes along as its own listing.</InfoTip></h3>
+        <div>
+          <label className="settings-check">
+            <input
             type="checkbox"
             checked={settings.enabled}
             disabled={saving}
             onChange={(e) => void save({ enabled: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Serve the product feed</span>
-            <span style={hint}>Switched off, the feed address below answers with nothing at all, and Google is none the wiser it exists.</span>
-          </span>
-        </label>
-      </section>
-
-      <section className="card">
-        <h3 style={legend}>Feed address</h3>
-        <span style={hint}>
-          Paste this into Google Merchant Center (Products → Data sources → Add a file → scheduled fetch). Google re-reads it on its own
-          schedule; every product variation goes along as its own listing.
-        </span>
-        {settings.feedUrl ? (
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-            <input type="text" readOnly value={settings.feedUrl} onFocus={(e) => e.target.select()} style={{ ...inputStyle, maxWidth: 560 }} />
-            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.feedUrl!, 'products')}>
-              {copied === 'products' ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        ) : (
-          <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
-        )}
-        <div style={{ marginTop: '0.75rem' }}>
+            Serve the product feed
+          </label>
+          <span className="field-hint" style={{ display: 'block', marginLeft: '1.75rem' }}>Switched off, the feed address below answers with nothing at all, and Google is none the wiser it exists.</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn"
@@ -270,8 +252,18 @@ export function GoogleShoppingSettingsTab() {
           >
             New address
           </button>
-          <span style={hint}>The address carries its own key, so only Google and you know it. If it leaks, mint a new one.</span>
+          <InfoTip>The address carries its own key, so only Google and you know it. If it leaks, mint a new one and give Merchant Center the new address.</InfoTip>
         </div>
+        {settings.feedUrl ? (
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+            <input type="text" readOnly value={settings.feedUrl} onFocus={(e) => e.target.select()} style={{ ...inputStyle, maxWidth: 560 }} />
+            <button type="button" className="btn" disabled={saving} onClick={() => void copyFeedUrl(settings.feedUrl!, 'products')}>
+              {copied === 'products' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ) : (
+          <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
+        )}
 
         {/* Products the feed refused to send. Google requires a picture on every
             listing and rejects anything without one, so sending them would only
@@ -306,8 +298,8 @@ export function GoogleShoppingSettingsTab() {
       </section>
 
       <section className="card">
-        <h3 style={legend}>Defaults</h3>
-        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+        <h3 className="card-title">Defaults</h3>
+        <label className="settings-field">
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Brand</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -318,9 +310,9 @@ export function GoogleShoppingSettingsTab() {
               style={inputStyle}
             />
           </div>
-          <span style={hint}>The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
+          <span className="field-hint">The last resort, used only when a listing has no brand of its own (set per product on its Google Shopping tab) and nothing below fills one in. Google wants one on almost everything.</span>
         </label>
-        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field">
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Condition</span>
           <select
             value={settings.defaultCondition}
@@ -332,62 +324,37 @@ export function GoogleShoppingSettingsTab() {
               <option key={c} value={c}>{CONDITION_LABELS[c]}</option>
             ))}
           </select>
-          <span style={hint}>What Google is told unless a product says otherwise. Almost always New.</span>
+          <span className="field-hint">What Google is told unless a product says otherwise. Almost always New.</span>
         </label>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.brandFromSupplier}
             disabled={saving}
             onChange={(e) => void save({ brandFromSupplier: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Use the supplier as the brand</span>
-            <span style={hint}>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</span>
-          </span>
+          Use the supplier as the brand
+          <InfoTip>Takes the brand from whoever you buy the product from, saving you typing one on each listing. Worth switching off if your suppliers are middlemen rather than the names on the box.</InfoTip>
         </label>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.mpnFromSku}
             disabled={saving}
             onChange={(e) => void save({ mpnFromSku: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your product codes as the maker&rsquo;s part number</span>
-            <span style={hint}>
-              Google files your listing alongside everyone else&rsquo;s selling the same thing by barcode first, and by brand and part
-              number second. If your product codes are the maker&rsquo;s own - the codes off their price list, printed on the box - this
-              is what puts you in the same place as every other shop selling it, rather than on a page of your own. Each variation sends
-              its own code. Leave it off if your codes are your own invention or something you would rather not publish: it tells the
-              world what you call your stock, and a part number nobody else uses matches nothing anyway.
-            </span>
-          </span>
+          Send your product codes as the maker&rsquo;s part number
+          <InfoTip>Google files your listing alongside everyone else&rsquo;s selling the same thing by barcode first, and by brand and part number second. If your product codes are the maker&rsquo;s own - the codes off their price list, printed on the box - this is what puts you in the same place as every other shop selling it, rather than on a page of your own. Each variation sends its own code. Leave it off if your codes are your own invention or something you would rather not publish: it tells the world what you call your stock, and a part number nobody else uses matches nothing anyway.</InfoTip>
         </label>
-      </section>
-
-      <section className="card">
-        <h3 style={legend}>Photographs</h3>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.parentImagesOnVariations}
             disabled={saving}
             onChange={(e) => void save({ parentImagesOnVariations: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send the listing&rsquo;s photographs with every variation</span>
-            <span style={hint}>
-              Each variation leads with its own pictures, as it does now, and the rest of the listing&rsquo;s gallery follows behind
-              them - the room shot, the close-up, the dimensions drawing - so a variation photographed once is not sent to Google on
-              one picture. Any listing photograph that belongs to another variation is left out, so a black desk is never shown in
-              oak. Google takes eleven pictures an item and ignores the rest. Leave this off if your listings show their other
-              finishes in photographs that are not filed against those variations here, because nothing can tell those apart.
-            </span>
-          </span>
+          Send the listing&rsquo;s photographs with every variation
+          <InfoTip>Each variation leads with its own pictures, as it does now, and the rest of the listing&rsquo;s gallery follows behind them - the room shot, the close-up, the dimensions drawing - so a variation photographed once is not sent to Google on one picture. Any listing photograph that belongs to another variation is left out, so a black desk is never shown in oak. Google takes eleven pictures an item and ignores the rest. Leave this off if your listings show their other finishes in photographs that are not filed against those variations here, because nothing can tell those apart.</InfoTip>
         </label>
       </section>
 
@@ -398,12 +365,8 @@ export function GoogleShoppingSettingsTab() {
       {sub === 'merchant' && (
         <div className="settings-masonry">
       <section className="card">
-        <h3 style={legend}>Your Merchant Center account</h3>
-        <span style={hint}>
-          Fill these in and every product gains a link straight to its own listing in Merchant Center, one per variation, on the
-          product&apos;s Google Shopping tab. Nothing else depends on them - the feed works perfectly well without.
-        </span>
-        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+        <h3 className="card-title">Your Merchant Center account <InfoTip>Fill these in and every product gains a link straight to its own listing in Merchant Center, one per variation, on the product&apos;s Google Shopping tab. Nothing else depends on them - the feed works perfectly well without.</InfoTip></h3>
+        <label className="settings-field">
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Account number</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
@@ -415,7 +378,7 @@ export function GoogleShoppingSettingsTab() {
               style={{ ...inputStyle, maxWidth: 220 }}
             />
           </div>
-          <span style={hint}>Merchant Center shows it at the top right of its own pages. Spaces and dashes are fine - only the numbers are kept.</span>
+          <span className="field-hint">Merchant Center shows it at the top right of its own pages. Spaces and dashes are fine - only the numbers are kept.</span>
         </label>
         <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Feed label</span>
@@ -428,14 +391,10 @@ export function GoogleShoppingSettingsTab() {
               style={{ ...inputStyle, maxWidth: 160 }}
             />
           </div>
-          <span style={hint}>Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
+          <span className="field-hint">Whatever Merchant Center lists against your feed, usually the country you sell into. Leave it blank and the links still work, Google just asks which feed you meant.</span>
         </label>
         <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
-          <h4 style={{ ...legend, fontSize: '0.875rem' }}>Merchant API access</h4>
-          <span style={hint}>
-            Needed for the product workbench&apos;s match snapshot and benchmark prices. The feed itself does not need this - Google
-            reads that on its own schedule.
-          </span>
+          <h4 style={{ ...legend, fontSize: '0.875rem' }}>Merchant API access <InfoTip>Needed for the product workbench&apos;s match snapshot and benchmark prices. The feed itself does not need this - Google reads that on its own schedule.</InfoTip></h4>
           <p style={{ ...hint, marginTop: '0.5rem' }}>
             Current key: {envStatus.GOOGLE_SHOPPING_SERVICE_ACCOUNT_JSON ? 'set' : 'not set'}
           </p>
@@ -456,21 +415,16 @@ export function GoogleShoppingSettingsTab() {
               onChange={(e) => setCredentialDraft(e.target.value)}
               style={{ ...inputStyle, maxWidth: 680, resize: 'vertical', fontFamily: 'var(--font-mono, monospace)' }}
             />
-            <span style={hint}>Cactus stores this as a Vercel environment variable. Paste a new JSON key here whenever you need to replace it.</span>
+            <span className="field-hint">Cactus stores this as a Vercel environment variable. Paste a new JSON key here whenever you need to replace it.</span>
           </label>
           <GoogleAccessCheck />
         </div>
       </section>
 
       <section className="card">
-        <h3 style={legend}>Health checks and alerts</h3>
-        <span style={hint}>
-          Once a day Cactus asks Google what it makes of your products and whether it managed to read your feed at all. What comes
-          back is on the Google Shopping tab under Products, in Health. These two settings decide when it is worth interrupting you
-          about it.
-        </span>
+        <h3 className="card-title">Health checks and alerts <InfoTip>Once a day Cactus asks Google what it makes of your products and whether it managed to read your feed at all. What comes back is on the Google Shopping tab under Products, in Health. These two settings decide when it is worth interrupting you about it.</InfoTip></h3>
 
-        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field">
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Tell me when this many products stop being shown at once</span>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <input
@@ -483,74 +437,58 @@ export function GoogleShoppingSettingsTab() {
               style={{ ...inputStyle, maxWidth: 140 }}
             />
           </div>
-          <span style={hint}>
+          <span className="field-hint">
             Counted against the day before, so a shop that has always had a few turned down is not nagged about them. Set it to 0 and
             nothing is raised at all - including anything already showing in the bell.
           </span>
         </label>
 
-        <div style={{ marginTop: '1rem' }}>
-          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.875rem' }}>
-            <input
-              type="checkbox"
-              checked={settings.alertEmailEnabled}
-              disabled={saving}
-              onChange={(e) => void save({ alertEmailEnabled: e.target.checked })}
-              style={{ marginTop: '0.2rem' }}
-            />
-            <span>
-              Email me as well as showing it in the bell
-              <span style={hint}>
-                Only when something first goes wrong, never a daily reminder that it still is. The wording lives in Settings, Emails,
-                under Google Shopping, and there is no link in it - your admin address stays yours.
-              </span>
-            </span>
-          </label>
-          <label style={{ display: 'block', marginTop: '0.75rem' }}>
-            <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Send those to</span>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <input
-                type="email"
-                autoComplete="off"
-                value={alertEmailDraft}
-                placeholder="you@example.com"
-                onChange={(e) => setAlertEmailDraft(e.target.value)}
-                style={{ ...inputStyle, maxWidth: 320 }}
-              />
-            </div>
-            {settings.alertEmailEnabled && settings.alertEmail === '' && (
-              <span style={{ ...hint, color: 'var(--color-warning)' }}>
-                Emails are switched on but there is nowhere to send them, so nothing will be sent. The bell still gets everything.
-              </span>
-            )}
-          </label>
-        </div>
-
-        <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
-          <h4 style={{ ...legend, fontSize: '0.875rem' }}>Which feed at Google is yours</h4>
-          <span style={hint}>
-            Cactus works this out by matching the address Google fetches against the feed address above, and only needs telling if you
-            have more than one feed pointing at the same place. Merchant Center shows the number in the address bar when a feed is open.
+        <label className="settings-field">
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>
+            Which feed at Google is yours
+            <InfoTip>Cactus works this out by matching the address Google fetches against the feed address, and only needs telling if you have more than one feed pointing at the same place. Merchant Center shows the number in the address bar when a feed is open.</InfoTip>
           </span>
-          <p style={{ ...hint, marginTop: '0.5rem' }}>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={dataSourceDraft}
+            placeholder="Leave blank to work it out"
+            onChange={(e) => setDataSourceDraft(e.target.value)}
+            style={inputStyle}
+          />
+          <span className="field-hint">
             {settings.feedDataSourceDetectedId
               ? `Found on its own: feed ${settings.feedDataSourceDetectedId}.`
               : 'Not found yet. It is looked for the first time the Health tab checks the feed.'}
-          </p>
-          <label style={{ display: 'block', marginTop: '0.75rem' }}>
-            <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Use this feed instead</span>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={dataSourceDraft}
-                placeholder="Leave blank to work it out"
-                onChange={(e) => setDataSourceDraft(e.target.value)}
-                style={{ ...inputStyle, maxWidth: 260 }}
-              />
-            </div>
-          </label>
-        </div>
+          </span>
+        </label>
+
+        <label className="settings-check field--beside-input">
+          <input
+            type="checkbox"
+            checked={settings.alertEmailEnabled}
+            disabled={saving}
+            onChange={(e) => void save({ alertEmailEnabled: e.target.checked })}
+          />
+          Email me as well as showing it in the bell
+          <InfoTip>Only when something first goes wrong, never a daily reminder that it still is. The wording lives in Settings, Emails, under Google Shopping, and there is no link in it - your admin address stays yours.</InfoTip>
+        </label>
+        <label className="settings-field">
+          <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Send those to</span>
+          <input
+            type="email"
+            autoComplete="off"
+            value={alertEmailDraft}
+            placeholder="you@example.com"
+            onChange={(e) => setAlertEmailDraft(e.target.value)}
+            style={inputStyle}
+          />
+          {settings.alertEmailEnabled && settings.alertEmail === '' && (
+            <span className="field-hint" style={{ color: 'var(--color-warning)' }}>
+              Emails are switched on but there is nowhere to send them, so nothing will be sent. The bell still gets everything.
+            </span>
+          )}
+        </label>
       </section>
 
         </div>
@@ -559,33 +497,22 @@ export function GoogleShoppingSettingsTab() {
       {sub === 'delivery' && (
         <div className="settings-masonry">
       <section className="card">
-        <h3 style={legend}>Delivery</h3>
-        <span style={hint}>
-          Google can be told your own delivery charges and how long each service takes, product by product, instead of working from the
-          flat rates set up in your Merchant Center account.
-        </span>
+        <h3 className="card-title">Delivery <InfoTip>Google can be told your own delivery charges and how long each service takes, product by product, instead of working from the flat rates set up in your Merchant Center account.</InfoTip></h3>
         {!settings.deliveryOptionsAvailable && (
           <p style={{ ...hint, marginTop: '0.75rem' }}>
             Nothing on this site publishes delivery services at the moment, so there is nothing for the switch below to send. Install a
             delivery module and it fills itself in.
           </p>
         )}
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.sendDeliveryOptions}
             disabled={saving || !settings.deliveryOptionsAvailable}
             onChange={(e) => void save({ sendDeliveryOptions: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Send your delivery charges with each product</span>
-            <span style={hint}>
-              Every service a product can be bought with goes along with it, priced and dated. Google quotes the cheapest one a shopper
-              can have, so a product with a free option is advertised as free delivery. Worth knowing: while this is on, your Merchant
-              Center delivery rates no longer apply to anything in the feed - these charges do.
-            </span>
-          </span>
+          Send your delivery charges with each product
+          <InfoTip>Every service a product can be bought with goes along with it, priced and dated. Google quotes the cheapest one a shopper can have, so a product with a free option is advertised as free delivery. Worth knowing: while this is on, your Merchant Center delivery rates no longer apply to anything in the feed - these charges do.</InfoTip>
         </label>
         <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Country these charges apply to</span>
@@ -599,16 +526,12 @@ export function GoogleShoppingSettingsTab() {
               style={{ ...inputStyle, maxWidth: 120 }}
             />
           </div>
-          <span style={hint}>Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
+          <span className="field-hint">Two letters, the country you deliver to - GB for the United Kingdom. Google insists on knowing.</span>
+          <InfoTip>The other way round: instead of sending your charges, tell Google which delivery group each product belongs to and set the rate for each group over in Merchant Center. Useful where what you charge depends on what the thing is - a chair, a desk, something made to order - rather than on the product itself.</InfoTip>
         </label>
 
         <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.25rem' }}>Group your products for delivery rates</h4>
-        <span style={hint}>
-          The other way round: instead of sending your charges, tell Google which delivery group each product belongs to and set the
-          rate for each group over in Merchant Center. Useful where what you charge depends on what the thing is - a chair, a desk,
-          something made to order - rather than on the product itself.
-        </span>
-        <label className="settings-field" style={{ display: 'block', marginTop: '0.75rem' }}>
+        <label className="settings-field">
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Where the group comes from</span>
           <select
             value={settings.shippingLabelSource}
@@ -621,7 +544,7 @@ export function GoogleShoppingSettingsTab() {
               Your own delivery rules
             </option>
           </select>
-          <span style={hint}>
+          <span className="field-hint">
             {settings.shippingLabelSource === 'delivery-services'
               ? 'Each product is labelled with the group its delivery price is written against - its range, category or supplier. '
                 + 'The Delivery tab under Products sends Merchant Center a rate for each of those same groups, so every label has a '
@@ -630,7 +553,7 @@ export function GoogleShoppingSettingsTab() {
                 + 'its own where it has one. You then set a rate for each of those values in Merchant Center by hand.'}
           </span>
           {!settings.deliveryScopesAvailable && (
-            <span style={hint}>
+            <span className="field-hint">
               Nothing on this site publishes delivery rules at the moment, so the second option has nothing to read. Install a
               delivery module and it fills itself in.
             </span>
@@ -657,29 +580,21 @@ export function GoogleShoppingSettingsTab() {
               </option>
             ))}
           </select>
-          <span style={hint}>
+          <span className="field-hint">
             Each product goes to Google labelled with its own value for whatever you pick here, and a variation uses its own where it
             has one. Google allows 100 characters, so anything longer arrives shortened - keep the wording brief and you will recognise
             it in Merchant Center.
           </span>
         </label>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '1.25rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.returnPolicyLabelsEnabled}
             disabled={saving}
             onChange={(e) => void save({ returnPolicyLabelsEnabled: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Tell Google which things cannot be sent back</span>
-            <span style={hint}>
-              Anything you have marked as not returnable goes to Google labelled with the very sentence you wrote to explain why, and
-              every variation of it follows suit. Set up a return policy in Merchant Center named exactly that sentence and Google will
-              apply it. Leave this off until those policies exist - a label Merchant Center does not recognise is quietly ignored, and
-              the item is treated as returnable after all.
-            </span>
-          </span>
+          Tell Google which things cannot be sent back
+          <InfoTip>Anything you have marked as not returnable goes to Google labelled with the very sentence you wrote to explain why, and every variation of it follows suit. Set up a return policy in Merchant Center named exactly that sentence and Google will apply it. Leave this off until those policies exist - a label Merchant Center does not recognise is quietly ignored, and the item is treated as returnable after all.</InfoTip>
         </label>
       </section>
 
@@ -689,38 +604,23 @@ export function GoogleShoppingSettingsTab() {
       {sub === 'promotions' && (
         <div className="settings-masonry">
       <section className="card">
-        <h3 style={legend}>Discounts on your listings</h3>
-        <span style={hint}>
-          If you take money off once a basket holds enough of one supplier&apos;s goods, Google can print that on the listings
-          themselves rather than leaving shoppers to find it in the basket.
-        </span>
+        <h3 className="card-title">Discounts on your listings <InfoTip>If you take money off once a basket holds enough of one supplier&apos;s goods, Google can print that on the listings themselves rather than leaving shoppers to find it in the basket.</InfoTip></h3>
         {!settings.promotionsAvailable && (
           <p style={{ ...hint, marginTop: '0.5rem' }}>
             You are not running that discount at the moment - it lives under Pricing, in the shop&apos;s own settings - so there would be
             nothing to advertise. Switch it on there and this fills itself in.
           </p>
         )}
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.promotionsFeedEnabled}
             disabled={saving || !settings.promotionsAvailable}
             onChange={(e) => void save({ promotionsFeedEnabled: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Advertise the discount on Google</span>
-            <span style={hint}>
-              One offer per supplier and amount, worked out from your own figures, with each product told which one it belongs to. Only
-              products currently on offer take part, because only they carry the money.
-            </span>
-          </span>
+          Advertise the discount on Google
+          <InfoTip>One offer per supplier and amount, worked out from your own figures, with each product told which one it belongs to. Only products currently on offer take part, because only they carry the money. <strong>Read this before you switch it on.</strong> Google can only say &quot;spend this much&quot; about a whole basket. Your rule counts one supplier&apos;s goods, and leaves delivery out. So a basket that reaches the figure across two suppliers meets Google&apos;s condition and not yours. The terms sent with every offer spell that out, which is what the box below is for.</InfoTip>
         </label>
-        <p style={{ ...hint, marginTop: '0.75rem' }}>
-          <strong>Read this before you switch it on.</strong> Google can only say &quot;spend this much&quot; about a whole basket. Your
-          rule counts one supplier&apos;s goods, and leaves delivery out. So a basket that reaches the figure across two suppliers meets
-          Google&apos;s condition and not yours. The terms sent with every offer spell that out, which is what the box below is for.
-        </p>
         <label style={{ display: 'block', marginTop: '0.75rem' }}>
           <span style={{ display: 'block', color: 'var(--color-text)', marginBottom: '0.25rem' }}>Anything else to add to the terms</span>
           <textarea
@@ -732,10 +632,11 @@ export function GoogleShoppingSettingsTab() {
             onBlur={() => { if (finePrintDraft !== settings.promotionsFinePrint) void save({ promotionsFinePrint: finePrintDraft }) }}
             style={{ ...inputStyle, maxWidth: 560, resize: 'vertical' }}
           />
-          <span style={hint}>
+          <span className="field-hint">
             Optional. The conditions themselves are written for you and always come first; this goes after them. Google allows 500
             characters in total.
           </span>
+          <InfoTip>Goes in Merchant Center as a third data source, the promotions one - alongside the product feed, not in place of it. Google asks to be let into promotions before it will read it, which is a form on their side rather than a switch on ours, and they review each offer before it shows.</InfoTip>
         </label>
         {settings.promotionsFeedUrl ? (
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
@@ -747,15 +648,10 @@ export function GoogleShoppingSettingsTab() {
         ) : (
           <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
         )}
-        <span style={hint}>
-          Goes in Merchant Center as a third data source, the promotions one - alongside the product feed, not in place of it. Google
-          asks to be let into promotions before it will read it, which is a form on their side rather than a switch on ours, and they
-          review each offer before it shows.
-        </span>
         {settings.promotionWindows.length > 0 && (
           <div style={{ marginTop: '1rem' }}>
             <span style={{ display: 'block', color: 'var(--color-text)', marginBottom: '0.25rem' }}>Offers running now</span>
-            <span style={hint}>
+            <span className="field-hint">
               Google will not reuse a name once an offer under it has finished, so each one is renewed under a new name before its run is
               up. If Google has already stopped one - it will say the offer has expired, or that it cannot be updated - start it again
               here and it goes out under a fresh name on the next read.
@@ -795,11 +691,7 @@ export function GoogleShoppingSettingsTab() {
       {sub === 'reviews' && (
         <div className="settings-masonry">
       <section className="card">
-        <h3 style={legend}>Customer reviews on Google</h3>
-        <span style={hint}>
-          Two separate things, and a shop can have either on its own: sending Google the reviews people leave here, and letting Google
-          ask your customers for one after their order arrives.
-        </span>
+        <h3 className="card-title">Customer reviews on Google <InfoTip>Two separate things, and a shop can have either on its own: sending Google the reviews people leave here, and letting Google ask your customers for one after their order arrives.</InfoTip></h3>
 
         <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.25rem' }}>Send your reviews to Google</h4>
         {!settings.reviewsAvailable && (
@@ -808,23 +700,15 @@ export function GoogleShoppingSettingsTab() {
             fills itself in.
           </p>
         )}
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+        <label className="settings-check">
           <input
             type="checkbox"
             checked={settings.reviewsFeedEnabled}
             disabled={saving || !settings.reviewsAvailable}
             onChange={(e) => void save({ reviewsFeedEnabled: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Serve the review feed</span>
-            <span style={hint}>
-              Every review you have published, with the star rating, the wording and the reviewer&apos;s first name, offered to Google so
-              the stars show on your listings. Reviews you have not published, and anything about a product you keep out of the feed, stay
-              here. Worth knowing: Google republishes what it is given, so this is you deciding your customers&apos; words may appear on
-              their pages.
-            </span>
-          </span>
+          Serve the review feed
+          <InfoTip>Every review you have published, with the star rating, the wording and the reviewer&apos;s first name, offered to Google so the stars show on your listings. Reviews you have not published, and anything about a product you keep out of the feed, stay here. Worth knowing: Google republishes what it is given, so this is you deciding your customers&apos; words may appear on their pages. Goes in Merchant Center as a second data source, the product reviews one - not in place of the product feed above. Google asks to be let into the programme before it will read it, which is a form on their side, not a switch on ours.</InfoTip>
         </label>
         {settings.reviewsFeedUrl ? (
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
@@ -836,28 +720,17 @@ export function GoogleShoppingSettingsTab() {
         ) : (
           <p style={{ color: 'var(--color-text-muted)', marginTop: '0.75rem' }}>The address appears once the site knows its own URL.</p>
         )}
-        <span style={hint}>
-          Goes in Merchant Center as a second data source, the product reviews one - not in place of the product feed above. Google asks
-          to be let into the programme before it will read it, which is a form on their side, not a switch on ours.
-        </span>
 
         <h4 style={{ ...legend, fontSize: '0.875rem', marginTop: '1.5rem' }}>Ask customers for a review</h4>
-        <label style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', cursor: 'pointer', marginTop: '0.75rem' }}>
+        <label className="settings-check field--wide">
           <input
             type="checkbox"
             checked={settings.customerReviewsEnabled}
             disabled={saving}
             onChange={(e) => void save({ customerReviewsEnabled: e.target.checked })}
-            style={{ marginTop: '0.2rem' }}
           />
-          <span>
-            <span style={{ display: 'block', color: 'var(--color-text)' }}>Offer Google&apos;s survey when an order is placed</span>
-            <span style={hint}>
-              Once somebody has paid, Google asks whether they would like to be surveyed after their delivery. Say yes and Google emails
-              them nearer the time, which is where the star rating beside your name in adverts comes from. Switching this on shares the
-              order&apos;s email address with Google, so your privacy notice needs to say so.
-            </span>
-          </span>
+          Offer Google&apos;s survey when an order is placed
+          <InfoTip>Once somebody has paid, Google asks whether they would like to be surveyed after their delivery. Say yes and Google emails them nearer the time, which is where the star rating beside your name in adverts comes from. Switching this on shares the order&apos;s email address with Google, so your privacy notice needs to say so.</InfoTip>
         </label>
         {settings.customerReviewsEnabled && !settings.merchantId && (
           <p style={{ ...hint, marginTop: '0.5rem', color: 'var(--color-danger)' }}>
@@ -876,7 +749,7 @@ export function GoogleShoppingSettingsTab() {
               <option key={style} value={style}>{OPT_IN_STYLE_LABELS[style]}</option>
             ))}
           </select>
-          <span style={hint}>Google&apos;s own finding is that a box tucked in a corner gets said yes to far less often than one in the middle.</span>
+          <span className="field-hint">Google&apos;s own finding is that a box tucked in a corner gets said yes to far less often than one in the middle.</span>
         </label>
         <label className="settings-field" style={{ display: 'block', marginTop: '1rem' }}>
           <span style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Usual working days to delivery</span>
@@ -890,15 +763,12 @@ export function GoogleShoppingSettingsTab() {
               style={{ ...inputStyle, maxWidth: 120 }}
             />
           </div>
-          <span style={hint}>
+          <span className="field-hint">
             Google has to be told roughly when the parcel lands so it knows when to write. Where a delivery module can say for a
             particular product, that is used instead and this figure never comes up.
           </span>
+          <InfoTip>The survey rides on a marker on your order confirmation layout. New sites get it put there for them; on a site that already had this module, add the &ldquo;Google Review Survey&rdquo; block to the Order Confirmation layout once and it stays put.</InfoTip>
         </label>
-        <span style={{ ...hint, marginTop: '1rem' }}>
-          The survey rides on a marker on your order confirmation layout. New sites get it put there for them; on a site that already had
-          this module, add the &ldquo;Google Review Survey&rdquo; block to the Order Confirmation layout once and it stays put.
-        </span>
       </section>
 
         </div>
