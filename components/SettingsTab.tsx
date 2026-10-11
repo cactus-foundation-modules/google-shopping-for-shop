@@ -10,6 +10,7 @@ import { GSF_CONDITIONS, GSF_OPT_IN_STYLES, type GsfCondition, type GsfLabelSour
 import { CategoryTaxonomySection } from '@/modules/google-shopping-for-shop/components/CategoryTaxonomySection'
 import { GoogleAccessCheck } from '@/modules/google-shopping-for-shop/components/GoogleAccessCheck'
 import { InfoTip } from '@/components/admin/InfoTip'
+import { useAdminConfirm } from '@/components/admin/useAdminConfirm'
 
 const BASE = '/api/m/google-shopping-for-shop/admin'
 
@@ -54,6 +55,7 @@ const SUB_TABS = [
 type SubTab = typeof SUB_TABS[number]['key']
 
 export function GoogleShoppingSettingsTab() {
+  const [askConfirm, confirmNode] = useAdminConfirm()
   const [sub, setSub] = useTabParam<SubTab>('view', 'feed', SUB_TABS.map((t) => t.key))
   const [settings, setSettings] = useState<GsfSettingsView | null>(null)
   const [envStatus, setEnvStatus] = useState<Record<string, boolean>>({})
@@ -212,6 +214,7 @@ export function GoogleShoppingSettingsTab() {
 
   return (
     <div>
+      {confirmNode}
       <TabStrip
         items={SUB_TABS.map((t) => ({ key: t.key, label: t.label, active: t.key === sub, onClick: () => setSub(t.key) }))}
       />
@@ -244,8 +247,8 @@ export function GoogleShoppingSettingsTab() {
             type="button"
             className="btn"
             disabled={saving}
-            onClick={() => {
-              if (window.confirm('Mint a new feed address? The old one stops working straight away, and Merchant Center will need the new address.')) {
+            onClick={async () => {
+              if (await askConfirm({ title: 'Mint a new feed address?', message: 'The old one stops working straight away, and Merchant Center will need the new address.', confirmLabel: 'Mint new address', danger: false })) {
                 void save({ regenerateToken: true })
               }
             }}
