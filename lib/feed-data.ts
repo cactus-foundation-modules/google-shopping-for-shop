@@ -27,12 +27,12 @@ import { variationCanonicalQuery } from '@/modules/shop-variations/lib/url-selec
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { getProductDataForProducts } from '@/modules/google-shopping-for-shop/lib/product-data'
 import { getDeliveryTiming } from '@/modules/google-shopping-for-shop/lib/delivery-timing'
-import { getProductLabels } from '@/modules/google-shopping-for-shop/lib/product-labels'
+import { getProductLabels, getSpecAxisPairs } from '@/modules/google-shopping-for-shop/lib/product-labels'
 import { getDeliveryCatalogue, getProductDeliveryScopes } from '@/modules/google-shopping-for-shop/lib/delivery/catalogue'
 import { assignDeliveryLabels } from '@/modules/google-shopping-for-shop/lib/delivery/labels'
 import { returnPolicyLabelFor } from '@/modules/google-shopping-for-shop/lib/return-policy'
 import { variationImageLinks, variantImageKeySet } from '@/modules/google-shopping-for-shop/lib/variation-images'
-import { fitShippingLabel, mapVariantAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { fitShippingLabel, mapVariantAxes, withSpecAxes, type FeedAvailability, type FeedItem, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { partitionPublishable } from '@/modules/google-shopping-for-shop/lib/withholding'
 import { adsRedirectLink, taggedLink } from '@/modules/google-shopping-for-shop/lib/feed-link-tags'
 import { getCategoryTaxonomy, googleCategoryResolver } from '@/modules/google-shopping-for-shop/lib/category-taxonomy'
@@ -285,7 +285,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
   // ----- Shared lookups ------------------------------------------------------
   const parentIds = parents.map((p) => p.id)
   const standaloneIds = standalone.map((p) => p.id)
-  const [productData, mediaByProduct, categories, categoryTaxonomy, titleTemplates, rules, rangeAttributeId, filedCategories] = await Promise.all([
+  const [productData, mediaByProduct, categories, categoryTaxonomy, titleTemplates, rules, rangeAttributeId, filedCategories, specPairs] = await Promise.all([
     // Variations too: each can carry the owner's own feed choice.
     getProductDataForProducts([...parentIds, ...standaloneIds, ...childIds]),
     getProductMediaForProducts([...parentIds, ...standaloneIds]),
@@ -295,6 +295,8 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
     listFeedRules(),
     getRangeAttributeId(),
     readProductCategories([...parentIds, ...standaloneIds]),
+    // Colour and size specs, the fallback for variations whose options name neither.
+    getSpecAxisPairs(childIds),
   ])
   const categoryPaths = buildCategoryPaths(categories)
   const categoryParent = new Map(categories.map((c) => [c.id, c.parentId]))
@@ -506,7 +508,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
               { returnable: parent.returnable, nonReturnableNote: parent.non_returnable_note },
             ) }
           : {}),
-        axes: mapVariantAxes(pairs),
+        axes: withSpecAxes(mapVariantAxes(pairs), specPairs.get(variant.childProductId) ?? []),
       }
 
       const own: RuleFacts = {

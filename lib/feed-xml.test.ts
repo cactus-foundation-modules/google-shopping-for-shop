@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildFeedXml, fitShippingLabel, mapVariantAxes, normaliseGtin, type FeedItem } from '@/modules/google-shopping-for-shop/lib/feed-xml'
+import { buildFeedXml, fitShippingLabel, mapVariantAxes, normaliseGtin, isPlainSpecName, specAxisOf, withSpecAxes, type FeedItem } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 
 const baseItem: FeedItem = {
   id: 'child-1',
@@ -194,6 +194,41 @@ describe('mapVariantAxes', () => {
 
   it('ignores blank values', () => {
     expect(mapVariantAxes([{ name: 'Colour', value: '  ' }])).toEqual({})
+  })
+})
+
+describe('withSpecAxes', () => {
+  const specs = [
+    { name: 'Size (mm)', value: '1462mm W x 890mm D x 1125mm H' },
+    { name: 'Colour', value: 'Beech & White' },
+  ]
+
+  it('fills colour and size from specs when the options name neither', () => {
+    const axes = withSpecAxes(mapVariantAxes([{ name: 'Unit', value: 'Left' }, { name: 'Lighting', value: 'LED' }]), specs)
+    expect(axes).toEqual({ color: 'Beech & White', size: '1462mm W x 890mm D x 1125mm H' })
+  })
+
+  it('lets options win on an axis they fill, and specs fill the other', () => {
+    const axes = withSpecAxes({ color: 'Black' }, specs)
+    expect(axes.color).toBe('Black')
+    expect(axes.size).toBe('1462mm W x 890mm D x 1125mm H')
+  })
+
+  it('returns the option axes untouched with no specs', () => {
+    const optionAxes = { material: 'Oak' }
+    expect(withSpecAxes(optionAxes, [])).toBe(optionAxes)
+  })
+
+  it('does not take material or pattern from specs', () => {
+    expect(withSpecAxes({}, [{ name: 'Material', value: 'Melamine' }, { name: 'Pattern', value: 'Plain' }])).toEqual({})
+  })
+
+  it('knows which attribute names are colour or size', () => {
+    expect(specAxisOf('Colour')).toBe('color')
+    expect(specAxisOf('Size (mm)')).toBe('size')
+    expect(specAxisOf('Weight')).toBeNull()
+    expect(isPlainSpecName('Size (mm)')).toBe(true)
+    expect(isPlainSpecName('Frame Colour (spec)')).toBe(false)
   })
 })
 

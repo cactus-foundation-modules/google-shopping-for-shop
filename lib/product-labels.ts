@@ -7,6 +7,7 @@
 // actually installed. On a shop without one the point is empty and nothing here
 // has a path to a module that is not there. Importing the other module directly
 // would break the build on every install that has not got it.
+import { isPlainSpecName, specAxisOf, type FeedOptionPair } from '@/modules/google-shopping-for-shop/lib/feed-xml'
 import { modulePublicExtensionPointComponents as moduleExtensionPointComponents } from '@/lib/modules/extension-points.public'
 
 const POINT = 'shop.product-attribute-values'
@@ -109,6 +110,47 @@ export async function getProductAttributeValues(
       const labels = value.filter((v): v is string => typeof v === 'string' && v.trim() !== '').map((v) => v.trim())
       if (labels.length > 0) result.set(productId, labels)
     }
+  }
+  return result
+}
+
+/** The colour and size specs written against each of these products, as name /
+ *  value pairs keyed by product id - what the feed falls back on when a
+ *  variation's options say nothing about colour or size.
+ *
+ *  Attributes are picked by NAME, with the same patterns the feed sorts option
+ *  names by, so no attribute id has to be configured. One list call plus one
+ *  values call per matching attribute (a shop has a handful) covers the whole
+ *  run; nothing is asked per item. Empty where nothing publishes attributes.
+ *  A product ticked against several values of one attribute contributes the
+ *  first, in the attribute's own order, so the feed does not shuffle run to run. */
+export async function getSpecAxisPairs(productIds: string[]): Promise<Map<string, FeedOptionPair[]>> {
+  const result = new Map<string, FeedOptionPair[]>()
+  const ids = [...new Set(productIds)].filter(Boolean)
+  if (ids.length === 0 || !provider()) return result
+  const wanted = (await listLabelAttributes()).filter((attribute) => specAxisOf(attribute.name) !== null)
+  const plain = new Map<string, FeedOptionPair[]>()
+  const partial = new Map<string, FeedOptionPair[]>()
+  for (const attribute of wanted) {
+    const target = isPlainSpecName(attribute.name) ? plain : partial
+    const values = await getProductAttributeValues(attribute.id, ids)
+    for (const [productId, labels] of values) {
+      const first = labels[0]
+      if (!first) continue
+      const list = target.get(productId) ?? []
+      list.push({ name: attribute.name, value: first })
+      target.set(productId, list)
+    }
+  }
+  // Per axis: the plain attribute where the product has one, else the part-specs.
+  const hasAxis = (pairs: FeedOptionPair[], axis: 'color' | 'size') => pairs.some((pair) => specAxisOf(pair.name) === axis)
+  for (const productId of new Set([...plain.keys(), ...partial.keys()])) {
+    const own = plain.get(productId) ?? []
+    const rest = partial.get(productId) ?? []
+    result.set(productId, [
+      ...own,
+      ...rest.filter((pair) => !hasAxis(own, specAxisOf(pair.name) === 'color' ? 'color' : 'size')),
+    ])
   }
   return result
 }

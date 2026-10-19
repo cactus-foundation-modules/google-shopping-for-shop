@@ -181,6 +181,38 @@ export function mapVariantAxes(pairs: FeedOptionPair[]): FeedVariantAxes {
   return axes
 }
 
+/** Whether an attribute NAME is one the feed would read as a colour or a size,
+ *  by the very same patterns mapVariantAxes sorts option names with - one set
+ *  of words, so a spec and an option can never disagree about what "Colour" is. */
+export function specAxisOf(attributeName: string): 'color' | 'size' | null {
+  const axes = mapVariantAxes([{ name: attributeName, value: 'x' }])
+  if (axes.color) return 'color'
+  if (axes.size) return 'size'
+  return null
+}
+
+/** The plain "Colour" / "Size" attribute, with or without a unit in brackets
+ *  ("Size (mm)"). A shop also has "Frame Colour" and "Seat Height" specs that
+ *  match the patterns but describe a part, not the item - when the plain one is
+ *  ticked, it speaks for the item and the part-specs stay out of g:color/g:size. */
+export function isPlainSpecName(attributeName: string): boolean {
+  return /^(colou?r|size)\s*(\([^)]*\))?$/i.test(attributeName.trim())
+}
+
+/** Fills g:color and g:size from a variation's own spec values where its option
+ *  names left the axis empty. Options always win: they are what the shopper
+ *  picked, a spec is only what the owner wrote down about the result. Material
+ *  and pattern are left to options - a spec "Material" is often a paragraph. */
+export function withSpecAxes(optionAxes: FeedVariantAxes, specPairs: FeedOptionPair[]): FeedVariantAxes {
+  if (specPairs.length === 0 || (optionAxes.color && optionAxes.size)) return optionAxes
+  const fromSpecs = mapVariantAxes(specPairs)
+  return {
+    ...optionAxes,
+    ...(!optionAxes.color && fromSpecs.color ? { color: fromSpecs.color } : {}),
+    ...(!optionAxes.size && fromSpecs.size ? { size: fromSpecs.size } : {}),
+  }
+}
+
 /** A short, stable stand-in for a label Google will not take whole. Four
  *  base-36 characters of a plain string hash: it is not a checksum, it only has
  *  to be the same every run and different for different text, so two labels that
