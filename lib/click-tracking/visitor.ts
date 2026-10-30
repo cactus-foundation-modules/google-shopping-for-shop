@@ -17,12 +17,15 @@
 //                  thirty days later is joined back to the click that started
 //                  it - which is exactly why it is not set without being asked.
 //
-// The hash key is the site's own ENCRYPTION_KEY, the same secret the receipt
-// tokens are signed with. Without it there is no honest way to derive a key at
-// all, so the caller is told so rather than being handed a predictable one.
+// The hash key is the site's stable id salt (core's derivationSalt), which
+// started out as the encryption key's own value and stays put when the key is
+// changed, so a visitor mid-session is not split in two by a key rotation.
+// Without it there is no honest way to derive a key at all, so the caller is
+// told so rather than being handed a predictable one.
 import { createHmac, randomBytes } from 'crypto'
 import type { NextRequest, NextResponse } from 'next/server'
 import { getClientIp } from '@/lib/auth/rate-limit'
+import { derivationSalt } from '@/lib/crypto/keyring'
 import { ATTRIBUTION_COOKIE, ATTRIBUTION_COOKIE_DAYS } from '@/modules/google-shopping-for-shop/lib/click-tracking/types'
 
 /** An attribution id is 22 url-safe characters of base64. Anything else in the
@@ -31,7 +34,7 @@ import { ATTRIBUTION_COOKIE, ATTRIBUTION_COOKIE_DAYS } from '@/modules/google-sh
 const ATTRIBUTION_ID = /^[A-Za-z0-9_-]{22}$/
 
 function key(): string | null {
-  return process.env.ENCRYPTION_KEY?.trim() || null
+  return derivationSalt()?.trim() || null
 }
 
 /** The UTC day the rotation is keyed on. UTC rather than local, so a server

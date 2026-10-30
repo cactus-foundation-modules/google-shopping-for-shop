@@ -24,6 +24,7 @@ import { resolveRange } from '@/modules/google-shopping-for-shop/lib/performance
 import type { ReportRange } from '@/modules/google-shopping-for-shop/lib/performance/types'
 import { getGsfSettings } from '@/modules/google-shopping-for-shop/lib/settings'
 import { asClickSource, type ClickSource } from '@/modules/google-shopping-for-shop/lib/click-tracking/types'
+import { derivationSalt } from '@/lib/crypto/keyring'
 
 /** How many landings the live feed shows. Enough to see the last day or two of
  *  a busy shop at a glance, few enough that a 20-second poll stays cheap. */
@@ -288,7 +289,7 @@ export async function readLiveReport(input: {
       trackingEnabled: settings.clickTrackingEnabled,
       linkTaggingEnabled: settings.linkTaggingEnabled,
       retentionDays: settings.clickRetentionDays,
-      keyMissing: !process.env.ENCRYPTION_KEY?.trim(),
+      keyMissing: !derivationSalt()?.trim(),
       cloudflareMismatch: input.viaCloudflare === undefined ? null : input.viaCloudflare && !trustsCloudflare,
     },
   }
