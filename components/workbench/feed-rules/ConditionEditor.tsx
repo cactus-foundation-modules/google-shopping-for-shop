@@ -19,6 +19,7 @@ import {
 import {
   GROUP_OPS,
   MAX_GROUP_DEPTH,
+  MAX_LIST_VALUES,
   RULE_OPERATORS,
   VALUELESS_OPERATORS,
   isRuleGroup,
@@ -67,7 +68,7 @@ function FieldPicker({ value, ctx, onChange, label }: { value: string; ctx: Buil
       {groups.filter((g) => g.fields.length > 0).map((group) => (
         <optgroup key={group.name} label={group.name}>
           {group.fields.map((field) => (
-            <option key={field.key} value={field.key}>{field.label} · {LEVEL_LABELS[field.level]}</option>
+            <option key={field.key} value={field.key} title={field.hint}>{field.label} · {LEVEL_LABELS[field.level]}</option>
           ))}
         </optgroup>
       ))}
@@ -122,16 +123,27 @@ function ValueInput({ condition, field, ctx, onChange, label }: {
   }
 
   if (condition.operator === 'in_list') {
+    // Pasted lists can run to hundreds of lines (a column of SKUs from a
+    // spreadsheet), so the box grows to a sensible height and says how many
+    // values it holds. Blank lines are kept while typing and dropped on save.
+    const filled = values.filter((v) => v.trim() !== '').length
     return (
-      <textarea
-        className="gsr-textarea"
-        aria-label={`${label}, one per line`}
-        placeholder="One per line"
-        rows={3}
-        value={values.join('\n')}
-        disabled={ctx.disabled}
-        onChange={(e) => onChange(e.target.value.split('\n'))}
-      />
+      <span className="gsr-list">
+        <textarea
+          className="gsr-textarea"
+          aria-label={`${label}, one per line`}
+          placeholder="One per line"
+          rows={Math.min(Math.max(values.length, 3), 10)}
+          value={values.join('\n')}
+          disabled={ctx.disabled}
+          onChange={(e) => onChange(e.target.value.split(/\r?\n/))}
+        />
+        {filled > 0 && (
+          <span className={filled > MAX_LIST_VALUES ? 'gsr-list-count gsr-list-count-over' : 'gsr-list-count'} aria-live="polite">
+            {filled} of up to {MAX_LIST_VALUES}
+          </span>
+        )}
+      </span>
     )
   }
 

@@ -91,6 +91,10 @@ export const PRODUCT_STATUS_CHOICES: FieldChoice[] = [
 /** The fields every shop has, whatever else is installed. */
 export const STATIC_FIELDS: readonly RuleField[] = [
   { key: 'supplier', label: 'Supplier', kind: 'text', level: 'either', hint: "The variation's own supplier, or its listing's when it has none" },
+  // Strictly the item's own code: a variation's own SKU, a product with no
+  // variations its own. Never the listing's SKU for a variation - every
+  // variation would share it, and a rule could not single one out.
+  { key: 'sku', label: 'SKU', kind: 'text', level: 'variation', hint: "The item's own SKU: a variation's own, never its listing's. Paste a list, one per line, with \"is any of\"" },
   { key: 'brand', label: 'Brand', kind: 'text', level: 'variation', hint: 'The brand the feed sends, before any rule changes it' },
   { key: 'category', label: 'Category', kind: 'category', level: 'product', hint: 'Any category the product is filed in, and every category above it' },
   { key: 'range', label: 'Range', kind: 'text', level: 'either', hint: 'Whichever attribute you have said is your range' },

@@ -514,6 +514,9 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
       const own: RuleFacts = {
         supplier: textFact(child.supplier),
         brand: textFact(identifiers.brand),
+        // The variation's own SKU, never its listing's - the same code its
+        // identity uses above, so "SKU is any of" picks out single variations.
+        sku: textFact(variant.sku),
         stock_quantity: variant.trackInventory ? variant.stockCount ?? 0 : null,
         stock_status: [item.availability],
         price: item.price,
@@ -604,6 +607,7 @@ export async function collectFeedItems(siteUrl: string): Promise<FeedData> {
         own: {
           supplier: textFact(product.supplier),
           brand: textFact(identifiers.brand),
+          sku: textFact(product.sku),
           category: categoryFact(product.id, product.masterCategoryId),
           stock_quantity: product.trackInventory ? product.stockCount ?? 0 : null,
           stock_status: [item.availability],

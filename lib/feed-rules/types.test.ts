@@ -77,3 +77,32 @@ describe('RuleDraftSchema and normaliseDraft', () => {
     expect(normaliseDraft({ ...good, action: { type: 'identifiers', mode: 'mpn_from_sku', brand: 'x' } }).action).toEqual({ type: 'identifiers', mode: 'mpn_from_sku' })
   })
 })
+
+describe('SKU lists', () => {
+  const skuList = (value: string[]): RuleDraft => ({
+    ...good,
+    conditions: { op: 'all', items: [{ field: 'sku', operator: 'in_list', value }] },
+    action: { type: 'identifiers', mode: 'brand', brand: 'Dynamic Office Solutions' },
+  })
+
+  it('offers SKU as a text field read from each variation', () => {
+    expect(fieldMeta('sku')).toEqual({ kind: 'text', level: 'variation' })
+  })
+
+  it('accepts a pasted list of a few hundred SKUs and tidies it: blank lines, stray spaces, Windows line ends and repeats', () => {
+    const pasted = Array.from({ length: 241 }, (_, i) => ` SKU-${i}\r`)
+    const raw = [...pasted, '', '  ', 'sku-0', 'SKU-1']
+    const parsed = RuleDraftSchema.safeParse(skuList(raw))
+    expect(parsed.success).toBe(true)
+    const tidy = normaliseDraft(parsed.success ? parsed.data : skuList([]))
+    const condition = tidy.conditions.items[0]
+    expect(condition && 'field' in condition ? condition.value : null).toEqual(Array.from({ length: 241 }, (_, i) => `SKU-${i}`))
+    expect(ruleProblems(tidy, kindOf)).toEqual([])
+  })
+
+  it('refuses more than 500 values, in words an owner can act on', () => {
+    const parsed = RuleDraftSchema.safeParse(skuList(Array.from({ length: 501 }, (_, i) => `SKU-${i}`)))
+    expect(parsed.success).toBe(false)
+    expect(parsed.success ? '' : parsed.error.issues[0]?.message).toMatch(/up to 500 values/)
+  })
+})

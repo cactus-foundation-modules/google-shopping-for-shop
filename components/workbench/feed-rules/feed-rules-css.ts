@@ -39,6 +39,9 @@ export const feedRulesCss = `
 .gsr-input:focus-visible,.gsr-textarea:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:1px}
 .gsr-wide{flex:1 1 20rem}
 .gsr-textarea{min-width:min(100%,14rem);padding:0.375rem 0.625rem;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);font:inherit;font-size:0.8125rem;resize:vertical}
+.gsr-list{display:inline-flex;flex-direction:column;gap:0.125rem;min-width:min(100%,14rem)}
+.gsr-list-count{font-size:0.75rem;color:var(--color-text-secondary);font-variant-numeric:tabular-nums}
+.gsr-list-count-over{color:var(--color-danger)}
 .gsr-action{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center}
 .gsr-group{display:grid;gap:0.5rem;padding:0.625rem;border:1px solid var(--color-border);border-radius:var(--radius-md);background:var(--color-bg-subtle)}
 .gsr-group.is-nested{background:var(--color-surface)}

@@ -101,11 +101,17 @@ export type RuleRef = { id: string; name: string }
 export const MAX_GROUP_DEPTH = 4
 /** Across the whole tree. */
 export const MAX_CONDITIONS = 50
+/** Values one "is any of" list can hold - enough for a few hundred SKUs
+ *  pasted in one go. */
+export const MAX_LIST_VALUES = 500
 
 const ConditionSchema = z.object({
   field: z.string().trim().min(1).max(200),
   operator: z.enum(RULE_OPERATORS),
-  value: z.union([z.string().max(500), z.array(z.string().max(500)).max(500)]).optional(),
+  value: z.union([
+    z.string().max(500),
+    z.array(z.string().max(500)).max(MAX_LIST_VALUES, `A list can hold up to ${MAX_LIST_VALUES} values, one per line. Split it across two conditions joined by "any".`),
+  ]).optional(),
 })
 
 // Recursive: zod needs the type spelled out for a schema that refers to itself.
@@ -223,8 +229,17 @@ export function normaliseDraft(draft: RuleDraft): RuleDraft {
     const field = condition.field.trim()
     if (VALUELESS_OPERATORS.includes(condition.operator)) return { field, operator: condition.operator }
     if (condition.operator === 'in_list') {
-      const raw = Array.isArray(condition.value) ? condition.value : (condition.value ?? '').split('\n')
-      return { field, operator: 'in_list', value: raw.map((value) => value.trim()).filter(Boolean) }
+      const raw = Array.isArray(condition.value) ? condition.value : (condition.value ?? '').split(/\r?\n/)
+      // Matching ignores case, so "ABC1" and "abc1" are the same value: keep
+      // the first spelling and drop the repeat, as a pasted list often has.
+      const seen = new Set<string>()
+      const value = raw.map((v) => v.trim()).filter((v) => {
+        const k = v.toLowerCase()
+        if (!v || seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      return { field, operator: 'in_list', value }
     }
     const single = Array.isArray(condition.value) ? condition.value[0] ?? '' : condition.value ?? ''
     return { field, operator: condition.operator, value: single.trim() }

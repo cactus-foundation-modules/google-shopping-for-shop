@@ -295,3 +295,63 @@ describe('precedence', () => {
     expect(outcome?.matched).toEqual([])
   })
 })
+
+describe('the SKU field: the item\'s own code, never its listing\'s', () => {
+  const inList = (field: string, value: string[]): RuleCondition => ({ field, operator: 'in_list', value })
+
+  it('matches a variation on its own SKU and not on the SKU its listing carries', () => {
+    const listing: RuleFacts = { sku: ['DESK-RANGE'], supplier: ['Dynamic Office Solutions'] }
+    const own = variation('v1', { sku: ['DESK-1200-OAK'] }, listing)
+    const sibling = variation('v2', { sku: ['DESK-1400-OAK'] }, listing)
+    const noOwnSku = variation('v3', { sku: [] }, listing)
+
+    expect(matchesConditions(all(is('sku', 'DESK-1200-OAK')), own)).toBe(true)
+    expect(matchesConditions(all(is('sku', 'DESK-1200-OAK')), sibling)).toBe(false)
+    // The listing's SKU never answers for a variation, even one with none.
+    for (const item of [own, sibling, noOwnSku]) expect(matchesConditions(all(is('sku', 'DESK-RANGE')), item)).toBe(false)
+    expect(factFor(noOwnSku, 'sku', 'variation')).toEqual([])
+    expect(matchesConditions(all({ field: 'sku', operator: 'is_empty' }), noOwnSku)).toBe(true)
+  })
+
+  it('matches a product with no variations on its own SKU', () => {
+    const standalone = subject({ itemId: 'chair', own: { sku: ['CHAIR-01'] } })
+    expect(matchesConditions(all(is('sku', 'CHAIR-01')), standalone)).toBe(true)
+    expect(matchesConditions(all(is('sku', 'CHAIR-02')), standalone)).toBe(false)
+  })
+
+  it('ignores case and stray spaces, on both the rule side and the item side', () => {
+    const item = subject({ itemId: 'a', own: { sku: ['  Ab-123 '] } })
+    expect(matchesConditions(all(is('sku', 'aB-123')), item)).toBe(true)
+    expect(matchesConditions(all(inList('sku', ['  AB-123  '])), item)).toBe(true)
+  })
+
+  it('"is any of" with a few hundred SKUs picks out exactly the listed variations', () => {
+    const listed = Array.from({ length: 241 }, (_, i) => `DOS-${String(i + 1).padStart(4, '0')}`)
+    const condition = all(inList('sku', listed))
+    const listing: RuleFacts = { sku: ['DOS-0001'] }
+    const subjects = [
+      ...listed.map((sku, i) => variation(`in-${i}`, { sku: [sku.toLowerCase()] }, listing)),
+      variation('not-listed', { sku: ['DOS-0242'] }, listing),
+      // Shares a listing whose own SKU is on the list, but its own is not.
+      variation('listing-only', { sku: ['OTHER-1'] }, listing),
+    ]
+    const matched = subjects.filter((s) => matchesConditions(condition, s)).map((s) => s.itemId)
+    expect(matched).toHaveLength(241)
+    expect(matched).not.toContain('not-listed')
+    expect(matched).not.toContain('listing-only')
+  })
+
+  it('a SKU brand rule above a supplier brand rule wins for its SKUs, and the supplier rule takes the rest', () => {
+    // List order, not the order they are handed over in, decides which wins.
+    const skuRule = rule('DOS by SKU', all(inList('sku', ['DOS-0001', 'DOS-0002'])), { type: 'identifiers', mode: 'brand', brand: 'Dynamic Office Solutions' }, { position: 1 })
+    const supplierRule = rule('DOS by supplier', all(is('supplier', 'Dynamic Office Solutions')), { type: 'identifiers', mode: 'brand', brand: 'Dynamic' }, { position: 2 })
+    const listing: RuleFacts = { supplier: ['Dynamic Office Solutions'] }
+    const outcomes = evaluateFeedRules([supplierRule, skuRule], [
+      variation('listed', { sku: ['DOS-0001'] }, listing),
+      variation('unlisted', { sku: ['DOS-0099'] }, listing),
+    ])
+    expect(outcomes.get('listed')?.identifiers.brand).toEqual({ value: 'Dynamic Office Solutions', rule: { id: skuRule.id, name: 'DOS by SKU' } })
+    expect(outcomes.get('listed')?.matched.map((r) => r.id)).toEqual([skuRule.id, supplierRule.id])
+    expect(outcomes.get('unlisted')?.identifiers.brand).toEqual({ value: 'Dynamic', rule: { id: supplierRule.id, name: 'DOS by supplier' } })
+  })
+})
