@@ -97,6 +97,8 @@ describe('the copy', () => {
     const terms = promotionTerms(promotion, '£')
     expect(terms).toContain('comes off each of these products')
     expect(terms).toContain('these products only')
+    // The shop counts the threshold at the reduced price, so the terms say so.
+    expect(terms).toContain('at their reduced prices')
     expect(terms).toContain('delivery does not count')
   })
 

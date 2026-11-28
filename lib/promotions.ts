@@ -125,7 +125,7 @@ export function promotionTitle(promotion: BuiltPromotion, symbol: string): strin
  * what the shop actually does gets written down.
  *
  * Google's minimum spend is judged on the whole basket. The shop's is judged on
- * one supplier's goods, delivery excluded. So the sentence below says which
+ * one supplier's offer items at their reduced prices, delivery excluded. So the sentence below says which
  * products the total is counted over, because that is the condition Google has
  * no field for and the one a shopper would otherwise be surprised by.
  *
@@ -136,8 +136,8 @@ export function promotionTitle(promotion: BuiltPromotion, symbol: string): strin
 export function promotionTerms(promotion: BuiltPromotion, symbol: string, extra?: string | null): string {
   const generated =
     `${amount(promotion.moneyOff, symbol)} comes off each of these products, once your basket holds ` +
-    `${amount(promotion.minimumPurchase, symbol)} or more of them. The total is counted across these products only, ` +
-    `and delivery does not count towards it.`
+    `${amount(promotion.minimumPurchase, symbol)} or more of them at their reduced prices. The total is counted ` +
+    `across these products only, and delivery does not count towards it.`
   const tail = extra?.trim()
   return tail ? `${generated} ${tail}` : generated
 }
